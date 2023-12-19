@@ -1,2 +1,2 @@
 # tui-serial
-TUI based serial monitor build with FTXUI
+TUI based serial monitor built with FTXUI
