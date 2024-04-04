@@ -21,17 +21,16 @@
 #include <thread>
 #include <format>
 #include <deque>
+#include <optional>
 
 #include "serial_windows.hpp"
 
 constexpr size_t fps = 1000 / 60;
-constexpr size_t maxRows = 64;
+size_t maxRows = 1024;
 
 using namespace ftxui;
 
-std::array<uint8_t, 512> buf;
-
-// std::vector<std::string> textRows;
+std::array<uint8_t, 4096> buf;
 
 std::deque<std::string> textRows;
 
@@ -68,6 +67,8 @@ size_t viewIndex = 0;
 bool scrollSynced = true;
 bool helpMenuActive = false;
 bool configVisable = false;
+
+std::optional<size_t> viewIndexOpt;
 
 std::string getLineEndingText(const size_t idx) {
     switch (lineEndings[idx]) {
@@ -116,7 +117,7 @@ int main(int argc, char* argv[]) {
         Element view = window(text("Help Menu"), 
             vbox({
                 text(" ?    toggle help menu"),
-                text(" k    scroll up"),           
+                text(" k    scroll up"),
                 text(" j    scroll down"),
                 text(" :    send mode"),
                 text(" C-l  cyle line ending"),
@@ -125,17 +126,30 @@ int main(int argc, char* argv[]) {
         );
         
         return view | clear_under;
+
     });
 
-
-    std::vector<std::string> availableComPorts = {"COM1", "COM10","COM1", "COM10","COM1", "COM10", "COM1", "COM10", "COM1", "COM10", };
-    std::vector<std::string> availableBaudrates = {"115200", "921600"};
+    std::vector<std::string> availableComPorts;
+    std::vector<std::string> availableBaudrates = {"115200", "921600", "9600", "19200", "38400", "57600", "230400", "460800"};
     std::vector<std::string> dataBits = {"8", "7"};
     std::vector<std::string> stopBits = {"1", "2"};
     int portSelected = 0;
     int baudrateSelected = 0;
     int dataBitsSelected = 0;
     int stopBitsSelected = 0;
+
+    auto buttonOption = ButtonOption::Ascii();
+    buttonOption.label = "Apply";
+    buttonOption.on_click = [&]() {
+        serial.open(availableComPorts.at(portSelected), std::stoi(availableBaudrates.at(baudrateSelected)));
+        tuiState = TuiState::VIEW;
+    };
+
+    auto buttonOption2 = ButtonOption::Ascii();
+    buttonOption2.label = "Cancel";
+    buttonOption2.on_click = [&]() {
+        tuiState = TuiState::VIEW;
+    };
 
     // WindowOptions windowOptions;
     // windowOptions.title = "Port Configuration";
@@ -145,6 +159,10 @@ int main(int argc, char* argv[]) {
         Dropdown(&availableBaudrates, &baudrateSelected),
         Dropdown(&dataBits, &dataBitsSelected),
         Dropdown(&stopBits, &stopBitsSelected),
+        Container::Horizontal({
+            Button(buttonOption),
+            Button(buttonOption2)
+        }),
     });
 
     auto configComponent = Renderer([&] {
@@ -154,31 +172,26 @@ int main(int argc, char* argv[]) {
         return view;
     });
 
-
-    // auto portConfigurationComponent = Window(windowOptions);
-
     auto main_window_renderer = Renderer([&] {
-        // Element current_view = hex_viewer_renderer->Render();
-        // Element view = text("hellow Mate");
+
         Elements rows;
         size_t sidx = 0;
         size_t eidx = 0;
-        if (scrollSynced) {
+        if (!viewIndexOpt.has_value()) {
             sidx = (textRows.size() > viewableTextRows) ? textRows.size() - viewableTextRows: 0;
             eidx = textRows.size();
         } else {
-            sidx = viewIndex;
-            eidx = std::min(textRows.size(), viewIndex + viewableTextRows);
+            sidx = viewIndexOpt.value();
+            eidx = sidx + viewableTextRows;
         }
 
-        // const size_t sidx = (textRows.size() > viewableTextRows) ? textRows.size() - viewableTextRows: 0;
         for (size_t i = sidx; i < eidx; i++) {
             rows.push_back(text(textRows.at(i)));
         }
         
         Element view = 
             vbox({
-                text(std::format("TUI Serial: {}/{} -> {}", std::min(viewableTextRows, textRows.size()), textRows.size(), inputStr)) | border,
+                text(std::format("TUI Serial: Connected to {} @ {} {}/{} -> {}", serial.getPortName(), serial.getBaudrate(), viewIndexOpt.value_or(textRows.size()), textRows.size(), inputStr)) | border,
                 hbox({
                     text("send:"),
                     serialSendComponent->Render(),
@@ -197,17 +210,8 @@ int main(int argc, char* argv[]) {
         }
         
         return view;
+
     });
-
-
-
-    //     Element view = window(text("Port Configuration", 
-    //         vbox({
-    //             Dropdown(, )     
-    //         })           
-    //     ));
-         
-    // });
 
     main_window_renderer |= CatchEvent([&](Event event) {
 
@@ -226,25 +230,29 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (c == 'k') {
-                    if (scrollSynced == true) {
-                        if (viewIndex == 0) return true;
-                        scrollSynced = false;
-                        viewIndex = (textRows.size() < viewableTextRows) ? 0 : (textRows.size() - viewableTextRows);
+
+                    if (!viewIndexOpt.has_value()) {
+
+                        if (textRows.size() < viewableTextRows) return true;
+
+                        viewIndexOpt = textRows.size() - viewableTextRows;
+                        
                     } else {
-                        viewIndex = (viewIndex == 0) ? 0 : viewIndex - 1;
+                        viewIndexOpt = (viewIndexOpt.value() == 0) ? 0 : viewIndexOpt.value() - 1;
                     }
+                    
                 }
 
                 if (c == 'j') {
-                        
-                    if (textRows.size() < viewableTextRows) return true;
 
-                    if (viewIndex + viewableTextRows > textRows.size()) {
-                        scrollSynced = true;
-                    } else {
-                        viewIndex++;
+                    if (viewIndexOpt.has_value()) {
+
+                        viewIndexOpt.value() += 1;
+
+                        if ((textRows.size() - viewableTextRows) < viewIndexOpt.value()) viewIndexOpt.reset();
+                        
                     }
-                                        
+                                       
                 }
 
                 if (c == '?') {
@@ -259,32 +267,8 @@ int main(int argc, char* argv[]) {
 
             if (event == Event::Special({5})) {
                 tuiState = TuiState::CONFIG;
+                availableComPorts = Serial::enumerateComPorts();
             }
-
-            // if (event.is_mouse()) {
-
-            //     if (event.mouse().WheelUp) {
-
-            //         if (textRows.size() < viewableTextRows) return true;
-        
-            //         if (scrollSynced == true) {
-            //             scrollSynced = false;
-            //             viewIndex = (textRows.size() < viewableTextRows) ? 0 : textRows.size() - (viewableTextRows - 1);
-            //         } else {
-            //             viewIndex = (viewIndex == 0) ? 0 : viewIndex - 1;
-            //         }
-                    
-            //     }
-
-            //     if (event.mouse().WheelDown) {
-
-            //         if (textRows.size() < viewableTextRows) { return true; }
-
-            //         viewIndex = (viewIndex > (textRows.size() - viewableTextRows)) ? viewIndex : viewIndex + 1;
-                    
-            //     }
-                
-            // }
             
         } else if (tuiState == TuiState::SEND) {
 
@@ -309,17 +293,17 @@ int main(int argc, char* argv[]) {
     });
 
     Loop loop(&screen, main_window_renderer);
-    // auto pollSerial = [&]() {
-    //     while (!loop.HasQuitted()) {
-    //         std::this_thread::sleep_for(std::chrono::milliseconds(fps));
-    //         serial.read();
-    //     }
-    // };
+    auto pollSerial = [&]() {
+        while (running) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            serial.read();
+        }
+    };
 
-    // std::thread serialThread(pollSerial);
 
-    // serial.open("\\\\.\\COM1");
-    serial.open(argv[1]);
+    serial.open(argv[1], std::stoi(argv[2]));
+
+    std::thread serialThread(pollSerial);
 
     size_t bytesInBuffer = 0;
 
@@ -329,20 +313,19 @@ int main(int argc, char* argv[]) {
         viewableCharsInRow = std::max(screen.dimx() - 2, 120);
         viewableTextRows   = std::max(screen.dimy() - 8, 10);
 
-        bytesRead = serial.read();
-        if (bytesRead > 0) {
-            bytesInBuffer += bytesRead;
-            serial.copyBytes(buf.data());
+        const auto bytesRead = serial.copyBytes(buf.data());
+        if (bytesRead) {
             parseBytesToRows(buf.data(), bytesRead, viewableCharsInRow);
+            screen.PostEvent(Event::Custom);
         }
 
         loop.RunOnce();
-        screen.PostEvent(Event::Custom);
+        // screen.PostEvent(Event::Custom);
         std::this_thread::sleep_for(std::chrono::milliseconds(fps));
 
     }
-
-    // serialThread.join();
+    running = false;
+    serialThread.join();
 
     return 0;
 }
@@ -368,7 +351,10 @@ void parseBytesToRows(const uint8_t* buffer, const size_t size, const size_t wid
         i = tokenIdx;
     }
 
-    while (textRows.size() > maxRows) { textRows.pop_front(); }
+    while (textRows.size() > maxRows) { 
+        if (viewIndexOpt.has_value()) break;
+        textRows.pop_front();
+    }
 
 }
 
