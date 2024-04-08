@@ -1,8 +1,5 @@
 #include <cstddef>
 #include <cstdint>
-#include <exception>
-#include <fileapi.h>
-#include <handleapi.h>
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include "Windows.h"
@@ -24,7 +21,30 @@ public:
 
     ~Serial() { close(); };
 
-    void open(const std::string& port, const uint32_t baudrate = 115200) {
+    enum StopBits {
+        ONE  = STOPBITS_10,
+        HALF = STOPBITS_15,
+        TWO  = STOPBITS_20,
+    };
+
+    enum DataBits {
+        EIGHT = DATABITS_8,
+        SEVEN = DATABITS_7,
+        SIX   = DATABITS_6,
+        FIVE  = DATABITS_5,
+    };
+    
+    enum Parity {
+        NONE  = PARITY_NONE,
+        ODD   = PARITY_ODD,
+        EVEN  = PARITY_EVEN,
+        MARK  = PARITY_MARK,
+        SPACE = PARITY_SPACE,
+    };
+
+    bool open(const std::string& port, const uint32_t baudrate = 115200) {
+
+        std::scoped_lock<std::mutex> lock(mutex);
 
         if (mIsOpen) { CloseHandle(mSerialHandle); mIsOpen = false; }
                 
@@ -42,38 +62,47 @@ public:
         );
 
         if (mSerialHandle == INVALID_HANDLE_VALUE) {
-            throw std::exception();
+            return false;
         } else {
             mIsOpen = true;
         }
 
-        configurePort();
+        return configurePort();
 
     }
-    
-    void configurePort() {
+
+    bool configurePort() {
 
         DCB serialConfig = {0};
 
-        GetCommState(mSerialHandle, &serialConfig);
-
+        if (!GetCommState(mSerialHandle, &serialConfig)) return false;
+        
         serialConfig.BaudRate    = mBaudrate;
-        serialConfig.ByteSize    = 8;    
-        serialConfig.StopBits    = ONESTOPBIT;
-        serialConfig.Parity      = NOPARITY;
+        serialConfig.ByteSize    = mDataBits;
+        serialConfig.StopBits    = mStopBits;
+        serialConfig.Parity      = mParity;
         serialConfig.fDtrControl = DTR_CONTROL_DISABLE;
         
-        SetCommState(mSerialHandle, &serialConfig);
+        if (!SetCommState(mSerialHandle, &serialConfig)) return false;
 
+        COMMTIMEOUTS serialTimeouts = {0};
+        if (!GetCommTimeouts(mSerialHandle, &serialTimeouts)) return false;
+
+        serialTimeouts.WriteTotalTimeoutConstant   = 100; // prevent long blocks on WriteFile with write timeout
+        serialTimeouts.WriteTotalTimeoutMultiplier = 0;
+
+        if (!SetCommTimeouts(mSerialHandle, &serialTimeouts)) return false;
+        
         PurgeComm(mSerialHandle, PURGE_RXCLEAR | PURGE_TXCLEAR);
-
+        return true;
     }
+
 
     size_t copyBytes(uint8_t* dest) {
 
-        std::unique_lock<std::mutex> lock(mutex);
+        std::scoped_lock<std::mutex> lock(mutex);
 
-        if (!mNumBytesInBuffer) return 0;
+        if (!mIsOpen || mNumBytesInBuffer == 0) return 0;
 
         std::copy(mBuffer.begin(), mBuffer.begin()+mNumBytesInBuffer, dest);
         
@@ -85,8 +114,10 @@ public:
             
     size_t read() {
 
-        std::unique_lock<std::mutex> lock(mutex);
+        std::scoped_lock<std::mutex> lock(mutex);
 
+        if (!mIsOpen) { return 0; }
+        
         DWORD err;
         COMSTAT stat;
     
@@ -95,24 +126,27 @@ public:
 
         if (stat.cbInQue == 0) { return 0; }
 
-        ReadFile(mSerialHandle, &mBuffer[mNumBytesInBuffer], stat.cbInQue, &bytesRead, nullptr);        
+        ReadFile(mSerialHandle, &mBuffer[mNumBytesInBuffer], stat.cbInQue, &bytesRead, nullptr);
         mNumBytesInBuffer += bytesRead;
 
         return bytesRead;
 
     }
 
-    void send(const char* buffer, size_t length) {
+    bool send(const char* buffer, size_t length) {
 
-        std::unique_lock<std::mutex> lock(mutex);
+        std::scoped_lock<std::mutex> lock(mutex);
+
+        if (!mIsOpen) { return 0; }
 
         DWORD bytesWritten = 0;
         
-        if (!WriteFile(mSerialHandle, buffer, length, &bytesWritten, nullptr)) {
-            throw std::exception();
-        }
+        if (!WriteFile(mSerialHandle, buffer, length, &bytesWritten, nullptr)) { return false; }
 
+        return true;
     }
+
+    bool isConnected() { return mIsOpen; }
 
     void send(const std::string toSend) { send(toSend.c_str(), toSend.size()); }
 
@@ -120,11 +154,17 @@ public:
 
     const std::string getPortName() const { return mPort; }
 
-    void setPortName(const std::string& port) { mPort = port; }
-
-    const size_t getBaudrate() const { return mBaudrate; }
+    void setPort(const std::string& port) { mPort = port; }
 
     void setBaudRate(const uint32_t baudrate) { mBaudrate = baudrate; }
+
+    void setDataBits(const DataBits databits) { mDataBits = databits; }
+
+    void setStopBits(const StopBits stopbits) { mStopBits = stopbits; }
+
+    void setParity(const Parity parity) { mParity = parity; }
+    
+    const uint32_t getBaudrate() const { return mBaudrate; }
 
     static std::vector<std::string> enumerateComPorts() {
 
@@ -146,10 +186,13 @@ private:
     
     std::string mPort = "";
     uint32_t mBaudrate = 115200;
+    uint32_t mDataBits = DATABITS_8;
+    uint32_t mParity   = PARITY_NONE;
+    uint32_t mStopBits = STOPBITS_10;
     HANDLE mSerialHandle = nullptr;
     bool mIsOpen = false;
 
-    std::array<uint8_t, 4096> mBuffer;
+    std::array<uint8_t, 8192> mBuffer;
     size_t mNumBytesInBuffer = 0;
     std::mutex mutex;
 

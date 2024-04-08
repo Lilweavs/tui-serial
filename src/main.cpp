@@ -30,7 +30,7 @@ size_t maxRows = 1024;
 
 using namespace ftxui;
 
-std::array<uint8_t, 4096> buf;
+std::array<uint8_t, 8192> buf;
 
 std::deque<std::string> textRows;
 
@@ -52,55 +52,45 @@ enum class TuiState {
     CONFIG
 };
 
-enum class LineEnding {
-    NONE,
-    CR,
-    LF,
-    CRLF
+template<size_t N>
+class Circulator {
+public:
+    Circulator(size_t idx = 0) : idx(idx) { }
+
+    // prefix increment
+    Circulator& operator++() {
+        idx = (idx + 1) % N;
+        return *this;
+    }
+ 
+    // postfix increment
+    Circulator operator++(int) {
+        Circulator<N> old = *this;
+        operator++();
+        return old;
+    }
+
+    operator size_t() { return size_t(idx); }
+        
+private:
+    std::size_t idx;  
 };
 
-std::array<LineEnding,4> lineEndings = {LineEnding::CRLF, LineEnding::LF, LineEnding::CR, LineEnding::NONE}; 
+// std::array<LineEnding,4> lineEndings = {LineEnding::CRLF, LineEnding::LF, LineEnding::CR, LineEnding::NONE};
+std::array<std::string,4> lineEndings = {"\r\n", "\n", "\r", ""};
+std::array<std::string,4> lineEndingsText = {"CRLF", "  LF", "  CR", "NONE"};
+Circulator<lineEndings.size()> lineEndingState; 
 
 TuiState tuiState = TuiState::VIEW;
-size_t lineEndingState = 0;
+// size_t lineEndingState = 0;
 size_t viewIndex = 0;
-bool scrollSynced = true;
+bool scrollSynced   = true;
 bool helpMenuActive = false;
-bool configVisable = false;
+bool configVisable  = false;
+bool viewPaused     = false;
+bool upperOnSend    = false;
 
 std::optional<size_t> viewIndexOpt;
-
-std::string getLineEndingText(const size_t idx) {
-    switch (lineEndings[idx]) {
-        case LineEnding::NONE:
-            return "NONE";
-        case LineEnding::CR:
-            return "  CR";
-        case LineEnding::LF:
-            return "  LF";
-        case LineEnding::CRLF:
-            return "CRLF";
-        default:
-            assert("Impossible");
-            return "";
-    }
-}
-
-std::string addLineEnding(const std::string& toSend, const LineEnding ending) {
-    switch (ending) {
-        case LineEnding::NONE:
-            return toSend;
-        case LineEnding::CR:
-            return toSend + '\r';
-        case LineEnding::LF:
-            return toSend + '\n';
-        case LineEnding::CRLF:
-            return toSend + "\r\n";
-        default:
-            assert("Impossible");
-            return "";
-    }
-}
 
 int main(int argc, char* argv[]) {
 
@@ -109,19 +99,36 @@ int main(int argc, char* argv[]) {
 
     InputOption option;
     option.multiline = false;
+    option.content = &inputStr;
+    option.transform = [](InputState state) {
+
+        if (state.focused) {
+            state.element |= color(Color::White);
+        } else {
+            state.element |= color(Color::GrayLight);
+        }
         
-    auto serialSendComponent = Input(&inputStr, "");
+        return state.element;
+    };
+        
+    auto serialSendComponent = Input(option);
 
     auto helpComponent = Renderer([] {
 
         Element view = window(text("Help Menu"), 
             vbox({
                 text(" ?    toggle help menu"),
+                text(" p    pause with flush"),
                 text(" k    scroll up"),
                 text(" j    scroll down"),
+                text(" K    scroll up 5"),
+                text(" J    scroll down 5"),
                 text(" :    send mode"),
-                text(" C-l  cyle line ending"),
                 text(" C-e  port configuration"),
+                text(" C-p  pause no flush"),
+                text(" C-o  clear serial view"),
+                text(" C-u  (send) toggle upper case"),
+                text(" C-l  (send) cyle line ending"),
              }) 
         );
         
@@ -131,12 +138,15 @@ int main(int argc, char* argv[]) {
 
     std::vector<std::string> availableComPorts;
     std::vector<std::string> availableBaudrates = {"115200", "921600", "9600", "19200", "38400", "57600", "230400", "460800"};
-    std::vector<std::string> dataBits = {"8", "7"};
-    std::vector<std::string> stopBits = {"1", "2"};
+    std::vector<std::string> dataBits           = {"8 Data Bits", "7 Data Bits"};
+    std::vector<std::string> stopBits           = {"1 Stop Bits", "1.5 Stop Bits", "2 Stop Bits"};
+    std::vector<std::string> parityStrings      = {"None", "Odd", "Even", "Mark", "Space"};
     int portSelected = 0;
     int baudrateSelected = 0;
     int dataBitsSelected = 0;
     int stopBitsSelected = 0;
+    int paritySelected = 0;
+
 
     auto buttonOption = ButtonOption::Ascii();
     buttonOption.label = "Apply";
@@ -151,23 +161,26 @@ int main(int argc, char* argv[]) {
         tuiState = TuiState::VIEW;
     };
 
-    // WindowOptions windowOptions;
-    // windowOptions.title = "Port Configuration";
-    // windowOptions.inner
     auto portConfigurationComponent = Container::Vertical({
         Dropdown(&availableComPorts, &portSelected),
         Dropdown(&availableBaudrates, &baudrateSelected),
-        Dropdown(&dataBits, &dataBitsSelected),
-        Dropdown(&stopBits, &stopBitsSelected),
+        Collapsible("Advanced Config",
+            Container::Vertical({
+                Dropdown(&dataBits, &dataBitsSelected),
+                Dropdown(&stopBits, &stopBitsSelected),
+                Dropdown(&parityStrings, &paritySelected),
+            }),
+            false
+        ),
         Container::Horizontal({
             Button(buttonOption),
             Button(buttonOption2)
-        }),
+        }) | hcenter,
     });
 
     auto configComponent = Renderer([&] {
         Element view = window(text("Port Configuration"),
-              portConfigurationComponent->Render()
+            portConfigurationComponent->Render()
         );
         return view;
     });
@@ -188,15 +201,30 @@ int main(int argc, char* argv[]) {
         for (size_t i = sidx; i < eidx; i++) {
             rows.push_back(text(textRows.at(i)));
         }
-        
+
+        std::string statusString;
+        if (serial.isConnected()) {
+            statusString = std::format("TUI Serial: Connected to {} @ {} {}/{}", serial.getPortName(), serial.getBaudrate(), viewIndexOpt.value_or(textRows.size()), textRows.size());
+        } else {
+            statusString = std::format("TUI Serial: Not Connected");
+        }
+
         Element view = 
             vbox({
-                text(std::format("TUI Serial: Connected to {} @ {} {}/{} -> {}", serial.getPortName(), serial.getBaudrate(), viewIndexOpt.value_or(textRows.size()), textRows.size(), inputStr)) | border,
+                hbox({
+                    text(statusString),
+                    separatorEmpty(),
+                    text((tuiState == TuiState::SEND) ? "SEND-MODE" : "") | inverted | color(Color::Green),
+                    separatorEmpty(),
+                    text((upperOnSend && tuiState == TuiState::SEND) ? "UPPER" : "") | inverted | color(Color::Green),
+                    separatorEmpty(),
+                    text((viewPaused) ? "PAUSED" : "") | color(Color::Red) | inverted
+                }) | border,
                 hbox({
                     text("send:"),
                     serialSendComponent->Render(),
                     separator(),
-                    text(getLineEndingText(lineEndingState))
+                    text(lineEndingsText.at(lineEndingState))
                 }) | border,
                 vflow(rows) | border
             }) | size(WIDTH, GREATER_THAN, 120);
@@ -206,7 +234,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (tuiState == TuiState::CONFIG) {
-            view = dbox({view, configComponent->Render() | center});
+            view = dbox({ view, configComponent->Render() | center });
         }
         
         return view;
@@ -229,56 +257,90 @@ int main(int argc, char* argv[]) {
                     return true;
                 }
 
-                if (c == 'k') {
-
-                    if (!viewIndexOpt.has_value()) {
-
-                        if (textRows.size() < viewableTextRows) return true;
-
-                        viewIndexOpt = textRows.size() - viewableTextRows;
-                        
-                    } else {
-                        viewIndexOpt = (viewIndexOpt.value() == 0) ? 0 : viewIndexOpt.value() - 1;
+                switch (c) {
+                    case 'p': {
+                        // TODO: currently implemented is pause without flush
+                        viewPaused = !viewPaused;
+                        break;
                     }
-                    
-                }
-
-                if (c == 'j') {
-
-                    if (viewIndexOpt.has_value()) {
-
-                        viewIndexOpt.value() += 1;
-
-                        if ((textRows.size() - viewableTextRows) < viewIndexOpt.value()) viewIndexOpt.reset();
-                        
+                    case 'k': {
+                        if (viewPaused && !viewIndexOpt.has_value()) {
+                            if (textRows.size() < viewableTextRows) return true;
+                            viewIndexOpt = textRows.size() - viewableTextRows;
+                        } else {
+                            viewIndexOpt = (viewIndexOpt.value() == 0) ? 0 : viewIndexOpt.value() - 1;
+                        }
+                        break;
                     }
-                                       
+                    case 'j': {
+                        if (viewPaused && viewIndexOpt.has_value()) {
+                            viewIndexOpt.value() += 1;
+                            if ((textRows.size() - viewableTextRows) < viewIndexOpt.value()) viewIndexOpt.reset();
+                        }
+                        break;
+                    }
+                    case 'K': {
+                        if (viewPaused && !viewIndexOpt.has_value()) {
+                            if (textRows.size() < viewableTextRows) return true;
+                            viewIndexOpt = textRows.size() - viewableTextRows;
+                        } else {
+                            viewIndexOpt = (viewIndexOpt.value() < 5) ? 0 : viewIndexOpt.value() - 5;
+                        }
+                        break;       
+                    }
+                    case 'J': {
+                        if (viewPaused && viewIndexOpt.has_value()) {
+                            viewIndexOpt.value() += 5;
+                            if ((textRows.size() - viewableTextRows) < viewIndexOpt.value()) viewIndexOpt.reset();
+                        }
+                        break;
+                    }
+                    case '?': {
+                        helpMenuActive = !helpMenuActive;       
+                        break;
+                    }
+                    default: {
+                        // not a command
+                        break;
+                    }                                   
                 }
 
-                if (c == '?') {
-                    helpMenuActive = !helpMenuActive;
-                }
-
-            }
-
-            if (event == Event::Special({12})) {
-                lineEndingState = (lineEndingState + 1) % lineEndings.size();
             }
 
             if (event == Event::Special({5})) {
                 tuiState = TuiState::CONFIG;
                 availableComPorts = Serial::enumerateComPorts();
+                auto it = std::find(availableComPorts.begin(), availableComPorts.end(), serial.getPortName());
+                if (it != availableComPorts.end()) { portSelected = std::distance(availableComPorts.begin(), it); }
+
+                it = std::find(availableBaudrates.begin(), availableBaudrates.end(), std::to_string(serial.getBaudrate()));
+                if (it != availableBaudrates.end()) { baudrateSelected = std::distance(availableBaudrates.begin(), it); }
+            }
+
+            if (event == Event::Special({15})) { // C-o
+                // clear serial view
+                textRows.clear();
+            }
+
+            if (event == Event::Special({16})) { // C-p
+                // pause serial view with flush
+                // TODO: allows pausing the serial terminal, but still capture input in the background 
             }
             
         } else if (tuiState == TuiState::SEND) {
 
             if (event == Event::Escape) {
                 tuiState = TuiState::VIEW;
-                return true;
             } else if (event == Event::Return) {
-                serial.send(addLineEnding(inputStr, lineEndings[lineEndingState]));
+                viewIndexOpt.reset();
+                std::string toSend = inputStr;
+                if (upperOnSend) std::transform(toSend.begin(), toSend.end(), toSend.begin(), [](uint8_t c){ return std::toupper(c); });
+                serial.send(toSend + lineEndings[lineEndingState]);
                 inputStr.clear();
-                return true;
+            } else if (event == Event::Special({21})) {
+                upperOnSend = !upperOnSend;
+            } else if (event == Event::Special({12})) {
+                lineEndingState++;
             } else {
                 return serialSendComponent->OnEvent(event);
             }
@@ -296,12 +358,21 @@ int main(int argc, char* argv[]) {
     auto pollSerial = [&]() {
         while (running) {
             std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            if (viewPaused) continue;
             serial.read();
         }
     };
 
 
-    serial.open(argv[1], std::stoi(argv[2]));
+    if (argc > 1) {
+        // TODO: Sanity check on input args
+        std::string port(argv[1]);
+        uint32_t baudrate = 115200;
+        if (argc > 2) { baudrate = std::stoi(argv[2]); }
+        
+        serial.open(port, baudrate);
+
+    }
 
     std::thread serialThread(pollSerial);
 
@@ -310,7 +381,7 @@ int main(int argc, char* argv[]) {
     loop.RunOnce();
     while (!loop.HasQuitted()) {
 
-        viewableCharsInRow = std::max(screen.dimx() - 2, 120);
+        viewableCharsInRow = std::max(screen.dimx() - 2, 80);
         viewableTextRows   = std::max(screen.dimy() - 8, 10);
 
         const auto bytesRead = serial.copyBytes(buf.data());
@@ -320,7 +391,6 @@ int main(int argc, char* argv[]) {
         }
 
         loop.RunOnce();
-        // screen.PostEvent(Event::Custom);
         std::this_thread::sleep_for(std::chrono::milliseconds(fps));
 
     }
@@ -330,7 +400,7 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-void parseBytesToRows(const uint8_t* buffer, const size_t size, const size_t width) {
+void parseBytesToRows(const uint8_t* buffer, const size_t size, size_t width) {
 
     size_t offset = 0;
     if (textRows.size() > 0) {
