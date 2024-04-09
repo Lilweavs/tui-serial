@@ -24,6 +24,7 @@
 #include <optional>
 
 #include "serial_windows.hpp"
+#include <chrono>
 
 constexpr size_t fps = 1000 / 60;
 size_t maxRows = 1024;
@@ -33,6 +34,7 @@ using namespace ftxui;
 std::array<uint8_t, 8192> buf;
 
 std::deque<std::string> textRows;
+std::deque<std::chrono::time_point<std::chrono::system_clock>> timeStamps;
 
 void parseBytesToRows(const uint8_t* buffer, const size_t size, const size_t width);
 
@@ -89,6 +91,7 @@ bool helpMenuActive = false;
 bool configVisable  = false;
 bool viewPaused     = false;
 bool upperOnSend    = false;
+bool enableTimeStamps = false;
 
 std::optional<size_t> viewIndexOpt;
 
@@ -125,6 +128,7 @@ int main(int argc, char* argv[]) {
                 text(" J    scroll down 5"),
                 text(" :    send mode"),
                 text(" C-e  port configuration"),
+                text(" C-t  toggle timeStamps"),
                 text(" C-p  pause no flush"),
                 text(" C-o  clear serial view"),
                 text(" C-u  (send) toggle upper case"),
@@ -199,12 +203,25 @@ int main(int argc, char* argv[]) {
         }
 
         for (size_t i = sidx; i < eidx; i++) {
-            rows.push_back(text(textRows.at(i)));
+
+            if (enableTimeStamps) {
+                rows.push_back(
+                    hbox({
+                        text(std::format("{:%T} ",
+                             std::chrono::zoned_time{std::chrono::current_zone(), floor<std::chrono::milliseconds>(timeStamps.at(i))}.get_local_time())) | color(Color::Green),
+                        text(textRows.at(i))
+                    })
+                );
+            } else {
+                rows.push_back(text(textRows.at(i)));
+            }
+
         }
 
         std::string statusString;
         if (serial.isConnected()) {
-            statusString = std::format("TUI Serial: Connected to {} @ {} {}/{}", serial.getPortName(), serial.getBaudrate(), viewIndexOpt.value_or(textRows.size()), textRows.size());
+            statusString = std::format("TUI Serial: Connected to {} @ {} {}/{} Time: {:%T}", serial.getPortName(), serial.getBaudrate(), viewIndexOpt.value_or(textRows.size()), textRows.size(),
+                                       std::chrono::zoned_time{std::chrono::current_zone(), floor<std::chrono::milliseconds>(std::chrono::system_clock::now())}.get_local_time());
         } else {
             statusString = std::format("TUI Serial: Not Connected");
         }
@@ -320,12 +337,15 @@ int main(int argc, char* argv[]) {
             if (event == Event::Special({15})) { // C-o
                 // clear serial view
                 textRows.clear();
+                timeStamps.clear();
             }
 
             if (event == Event::Special({16})) { // C-p
                 // pause serial view with flush
                 // TODO: allows pausing the serial terminal, but still capture input in the background 
             }
+
+            if (event == Event::Special({20})) { enableTimeStamps = !enableTimeStamps; }
             
         } else if (tuiState == TuiState::SEND) {
 
@@ -417,13 +437,15 @@ void parseBytesToRows(const uint8_t* buffer, const size_t size, size_t width) {
         const size_t eidx = ((i + width) > size) ? size : i + width;
         const size_t tokenIdx = std::distance(buffer, std::find(&buffer[i], &buffer[eidx], '\n'));
 
-        textRows.push_back(std::string(&buffer[i], &buffer[tokenIdx+1]));        
+        textRows.push_back(std::string(&buffer[i], &buffer[tokenIdx+1]));
+        timeStamps.push_back(std::chrono::system_clock::now());        
         i = tokenIdx;
     }
 
     while (textRows.size() > maxRows) { 
         if (viewIndexOpt.has_value()) break;
         textRows.pop_front();
+        timeStamps.pop_back();
     }
 
 }
