@@ -27,7 +27,7 @@
 #include <chrono>
 
 constexpr size_t fps = 1000 / 60;
-size_t maxRows = 1024;
+size_t maxRows = 512;
 
 using namespace ftxui;
 
@@ -281,32 +281,38 @@ int main(int argc, char* argv[]) {
                         break;
                     }
                     case 'k': {
-                        if (viewPaused && !viewIndexOpt.has_value()) {
-                            if (textRows.size() < viewableTextRows) return true;
-                            viewIndexOpt = textRows.size() - viewableTextRows;
+
+                        if (textRows.size() < viewableTextRows) return true;
+
+                        if (viewIndexOpt) {
+                            viewIndexOpt.value() -= (viewIndexOpt.value() == 0) ? 0 : 1;            
                         } else {
-                            viewIndexOpt = (viewIndexOpt.value() == 0) ? 0 : viewIndexOpt.value() - 1;
+                            viewIndexOpt = textRows.size() - viewableTextRows;
                         }
+                        
                         break;
                     }
                     case 'j': {
-                        if (viewPaused && viewIndexOpt.has_value()) {
+                        if (viewIndexOpt.has_value()) {
                             viewIndexOpt.value() += 1;
                             if ((textRows.size() - viewableTextRows) < viewIndexOpt.value()) viewIndexOpt.reset();
                         }
                         break;
                     }
                     case 'K': {
-                        if (viewPaused && !viewIndexOpt.has_value()) {
-                            if (textRows.size() < viewableTextRows) return true;
-                            viewIndexOpt = textRows.size() - viewableTextRows;
+
+                        if (textRows.size() < (viewableTextRows + 5)) return true;
+                            
+                        if (viewIndexOpt) {
+                            viewIndexOpt.value() -= (viewIndexOpt.value() < 5) ? 0 : 5;            
                         } else {
-                            viewIndexOpt = (viewIndexOpt.value() < 5) ? 0 : viewIndexOpt.value() - 5;
+                            viewIndexOpt = textRows.size() - viewableTextRows;
                         }
+
                         break;       
                     }
                     case 'J': {
-                        if (viewPaused && viewIndexOpt.has_value()) {
+                        if (viewIndexOpt.has_value()) {
                             viewIndexOpt.value() += 5;
                             if ((textRows.size() - viewableTextRows) < viewIndexOpt.value()) viewIndexOpt.reset();
                         }
@@ -338,6 +344,7 @@ int main(int argc, char* argv[]) {
                 // clear serial view
                 textRows.clear();
                 timeStamps.clear();
+                viewIndexOpt.reset();
             }
 
             if (event == Event::Special({16})) { // C-p
@@ -407,6 +414,7 @@ int main(int argc, char* argv[]) {
         const auto bytesRead = serial.copyBytes(buf.data());
         if (bytesRead) {
             parseBytesToRows(buf.data(), bytesRead, viewableCharsInRow);
+            viewIndexOpt.reset();
             screen.PostEvent(Event::Custom);
         }
 
@@ -443,9 +451,9 @@ void parseBytesToRows(const uint8_t* buffer, const size_t size, size_t width) {
     }
 
     while (textRows.size() > maxRows) { 
-        if (viewIndexOpt.has_value()) break;
+        // if (viewIndexOpt.has_value()) break;
         textRows.pop_front();
-        timeStamps.pop_back();
+        timeStamps.pop_front();
     }
 
 }
