@@ -1,7 +1,3 @@
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
-#include <cassert>
 #include <ftxui/component/component.hpp> // for Input, Renderer, ResizableSplitLeft
 #include <ftxui/component/component_options.hpp>
 #include <ftxui/component/loop.hpp>
@@ -13,38 +9,32 @@
 #include <ftxui/screen/color.hpp>
 #include <ftxui/screen/screen.hpp>
 #include <ftxui/screen/terminal.hpp>
-
-#include <algorithm>
 #include <ftxui/util/ref.hpp>
+
+#include <cstddef>
+#include <cstdint>
+#include <cassert>
+#include <algorithm>
 #include <memory> // for allocator, __shared_ptr_access, shared_ptr
 #include <string> // for string
 #include <thread>
 #include <format>
-#include <deque>
-#include <optional>
-
-#include "serial_windows.hpp"
 #include <chrono>
 
+#include "serial_windows.hpp"
+
+#include "AsciiView.hpp"
+
 constexpr size_t fps = 1000 / 60;
-size_t maxRows = 512;
 
 using namespace ftxui;
 
 std::array<uint8_t, 8192> buf;
 
-std::deque<std::string> textRows;
-std::deque<std::chrono::time_point<std::chrono::system_clock>> timeStamps;
-
-void parseBytesToRows(const uint8_t* buffer, const size_t size, const size_t width);
-
 size_t viewableTextRows = 0;
 size_t viewableCharsInRow = 0;
 
-size_t bytesRead = 0;
-
-Serial serial;
-bool running = true;
+std::atomic<bool> running = true;
 
 std::string inputStr;
 
@@ -78,22 +68,18 @@ private:
     std::size_t idx;  
 };
 
-// std::array<LineEnding,4> lineEndings = {LineEnding::CRLF, LineEnding::LF, LineEnding::CR, LineEnding::NONE};
 std::array<std::string,4> lineEndings = {"\r\n", "\n", "\r", ""};
 std::array<std::string,4> lineEndingsText = {"CRLF", "  LF", "  CR", "NONE"};
 Circulator<lineEndings.size()> lineEndingState; 
 
 TuiState tuiState = TuiState::VIEW;
-// size_t lineEndingState = 0;
-size_t viewIndex = 0;
-bool scrollSynced   = true;
 bool helpMenuActive = false;
 bool configVisable  = false;
 bool viewPaused     = false;
 bool upperOnSend    = false;
-bool enableTimeStamps = false;
 
-std::optional<size_t> viewIndexOpt;
+Serial serial;
+AsciiView asciiView;
 
 int main(int argc, char* argv[]) {
 
@@ -191,37 +177,9 @@ int main(int argc, char* argv[]) {
 
     auto main_window_renderer = Renderer([&] {
 
-        Elements rows;
-        size_t sidx = 0;
-        size_t eidx = 0;
-        if (!viewIndexOpt.has_value()) {
-            sidx = (textRows.size() > viewableTextRows) ? textRows.size() - viewableTextRows: 0;
-            eidx = textRows.size();
-        } else {
-            sidx = viewIndexOpt.value();
-            eidx = sidx + viewableTextRows;
-        }
-
-        for (size_t i = sidx; i < eidx; i++) {
-
-            if (enableTimeStamps) {
-                rows.push_back(
-                    hbox({
-                        text(std::format("{:%T} ",
-                             std::chrono::zoned_time{std::chrono::current_zone(), floor<std::chrono::milliseconds>(timeStamps.at(i))}.get_local_time())) | color(Color::Green),
-                        text(textRows.at(i))
-                    })
-                );
-            } else {
-                rows.push_back(text(textRows.at(i)));
-            }
-
-        }
-
         std::string statusString;
         if (serial.isConnected()) {
-            statusString = std::format("TUI Serial: Connected to {} @ {} {}/{} Time: {:%T}", serial.getPortName(), serial.getBaudrate(), viewIndexOpt.value_or(textRows.size()), textRows.size(),
-                                       std::chrono::zoned_time{std::chrono::current_zone(), floor<std::chrono::milliseconds>(std::chrono::system_clock::now())}.get_local_time());
+            statusString = std::format("TUI Serial: Connected to {} @ {} {}/{}", serial.getPortName(), serial.getBaudrate(), asciiView.getIndex(), asciiView.getNumRows());
         } else {
             statusString = std::format("TUI Serial: Not Connected");
         }
@@ -243,11 +201,11 @@ int main(int argc, char* argv[]) {
                     separator(),
                     text(lineEndingsText.at(lineEndingState))
                 }) | border,
-                vflow(rows) | border
+                vflow(asciiView.getView()) | border
             }) | size(WIDTH, GREATER_THAN, 120);
 
         if (helpMenuActive) {
-            view = dbox({view, helpComponent->Render() | bottom_right});
+            view = dbox({view, vbox({filler(), hbox({filler(), helpComponent->Render()}) })});
         }
 
         if (tuiState == TuiState::CONFIG) {
@@ -262,75 +220,39 @@ int main(int argc, char* argv[]) {
 
         if (event == Event::Escape) {
             tuiState = TuiState::VIEW;
-            return true;
-        }
-        
-        if (tuiState == TuiState::VIEW) {
+        } else if (tuiState == TuiState::VIEW) {
             
             if (const char c = event.character().at(0); event.is_character()) {
 
-                if (c == ':') {
-                    tuiState = TuiState::SEND;
-                    return true;
-                }
-
                 switch (c) {
-                    case 'p': {
+                    case 'p':
                         // TODO: currently implemented is pause without flush
                         viewPaused = !viewPaused;
                         break;
-                    }
-                    case 'k': {
-
-                        if (textRows.size() < viewableTextRows) return true;
-
-                        if (viewIndexOpt) {
-                            viewIndexOpt.value() -= (viewIndexOpt.value() == 0) ? 0 : 1;            
-                        } else {
-                            viewIndexOpt = textRows.size() - viewableTextRows;
-                        }
-                        
+                    case 'k':
+                        asciiView.scrollViewUp(1);
                         break;
-                    }
-                    case 'j': {
-                        if (viewIndexOpt.has_value()) {
-                            viewIndexOpt.value() += 1;
-                            if ((textRows.size() - viewableTextRows) < viewIndexOpt.value()) viewIndexOpt.reset();
-                        }
+                    case 'j':
+                        asciiView.scrollViewDown(1);
                         break;
-                    }
-                    case 'K': {
-
-                        if (textRows.size() < (viewableTextRows + 5)) return true;
-                            
-                        if (viewIndexOpt) {
-                            viewIndexOpt.value() -= (viewIndexOpt.value() < 5) ? 0 : 5;            
-                        } else {
-                            viewIndexOpt = textRows.size() - viewableTextRows;
-                        }
-
+                    case 'K':
+                        asciiView.scrollViewUp(5);
                         break;       
-                    }
-                    case 'J': {
-                        if (viewIndexOpt.has_value()) {
-                            viewIndexOpt.value() += 5;
-                            if ((textRows.size() - viewableTextRows) < viewIndexOpt.value()) viewIndexOpt.reset();
-                        }
+                    case 'J':
+                        asciiView.scrollViewDown(5);
                         break;
-                    }
-                    case '?': {
+                    case '?':
                         helpMenuActive = !helpMenuActive;       
                         break;
-                    }
-                    default: {
+                    case ':':
+                        tuiState = TuiState::SEND;
+                        break;
+                    default:
                         // not a command
                         break;
-                    }                                   
                 }
-
-            }
-
-            if (event == Event::Special({5})) {
+            
+            } else if (event == Event::Special({5})) {
                 tuiState = TuiState::CONFIG;
                 availableComPorts = Serial::enumerateComPorts();
                 auto it = std::find(availableComPorts.begin(), availableComPorts.end(), serial.getPortName());
@@ -338,28 +260,23 @@ int main(int argc, char* argv[]) {
 
                 it = std::find(availableBaudrates.begin(), availableBaudrates.end(), std::to_string(serial.getBaudrate()));
                 if (it != availableBaudrates.end()) { baudrateSelected = std::distance(availableBaudrates.begin(), it); }
-            }
-
-            if (event == Event::Special({15})) { // C-o
-                // clear serial view
-                textRows.clear();
-                timeStamps.clear();
-                viewIndexOpt.reset();
-            }
-
-            if (event == Event::Special({16})) { // C-p
+            } else if (event == Event::Special({15})) { // C-o
+                asciiView.clearView();
+            } else if (event == Event::Special({16})) { // C-p
                 // pause serial view with flush
                 // TODO: allows pausing the serial terminal, but still capture input in the background 
+            } else if (event == Event::Special({20})) {
+                asciiView.toggleTimeStamps();
+            } else {
+                // not a command
             }
-
-            if (event == Event::Special({20})) { enableTimeStamps = !enableTimeStamps; }
             
         } else if (tuiState == TuiState::SEND) {
 
             if (event == Event::Escape) {
                 tuiState = TuiState::VIEW;
             } else if (event == Event::Return) {
-                viewIndexOpt.reset();
+                // asciiView.resetView();
                 std::string toSend = inputStr;
                 if (upperOnSend) std::transform(toSend.begin(), toSend.end(), toSend.begin(), [](uint8_t c){ return std::toupper(c); });
                 serial.send(toSend + lineEndings[lineEndingState]);
@@ -403,8 +320,6 @@ int main(int argc, char* argv[]) {
 
     std::thread serialThread(pollSerial);
 
-    size_t bytesInBuffer = 0;
-
     loop.RunOnce();
     while (!loop.HasQuitted()) {
 
@@ -413,8 +328,8 @@ int main(int argc, char* argv[]) {
 
         const auto bytesRead = serial.copyBytes(buf.data());
         if (bytesRead) {
-            parseBytesToRows(buf.data(), bytesRead, viewableCharsInRow);
-            viewIndexOpt.reset();
+            asciiView.parseBytes(std::span(buf.begin(), bytesRead), viewableCharsInRow);
+            asciiView.resetView(viewableTextRows);
             screen.PostEvent(Event::Custom);
         }
 
@@ -426,35 +341,5 @@ int main(int argc, char* argv[]) {
     serialThread.join();
 
     return 0;
-}
-
-void parseBytesToRows(const uint8_t* buffer, const size_t size, size_t width) {
-
-    size_t offset = 0;
-    if (textRows.size() > 0) {
-        std::string& last = textRows.back();
-        if (!(last.size() == width || last.back() == '\n')) {
-            auto bytesToSearch = std::min(width - last.size(), size);
-            offset = std::distance(buffer, std::find(buffer, &buffer[bytesToSearch], '\n'));
-            last.append(std::string(buffer, &buffer[offset]));
-        } 
-        
-    }
-
-    for (size_t i = offset; i < size; i++) {
-        const size_t eidx = ((i + width) > size) ? size : i + width;
-        const size_t tokenIdx = std::distance(buffer, std::find(&buffer[i], &buffer[eidx], '\n'));
-
-        textRows.push_back(std::string(&buffer[i], &buffer[tokenIdx+1]));
-        timeStamps.push_back(std::chrono::system_clock::now());        
-        i = tokenIdx;
-    }
-
-    while (textRows.size() > maxRows) { 
-        // if (viewIndexOpt.has_value()) break;
-        textRows.pop_front();
-        timeStamps.pop_front();
-    }
-
 }
 
