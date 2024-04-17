@@ -44,39 +44,13 @@ enum class TuiState {
     CONFIG
 };
 
-template<size_t N>
-class Circulator {
-public:
-    Circulator(size_t idx = 0) : idx(idx) { }
-
-    // prefix increment
-    Circulator& operator++() {
-        idx = (idx + 1) % N;
-        return *this;
-    }
- 
-    // postfix increment
-    Circulator operator++(int) {
-        Circulator<N> old = *this;
-        operator++();
-        return old;
-    }
-
-    operator size_t() { return size_t(idx); }
-        
-private:
-    std::size_t idx;  
-};
-
-std::array<std::string,4> lineEndings = {"\r\n", "\n", "\r", ""};
-std::array<std::string,4> lineEndingsText = {"CRLF", "  LF", "  CR", "NONE"};
-Circulator<lineEndings.size()> lineEndingState; 
 
 TuiState tuiState = TuiState::VIEW;
-bool helpMenuActive = false;
-bool configVisable  = false;
-bool viewPaused     = false;
-bool upperOnSend    = false;
+bool helpMenuActive  = false;
+bool configVisable   = false;
+bool viewPaused      = false;
+bool sendOnType      = false;
+bool transmitEnabled = true;
 
 Serial serial;
 AsciiView asciiView;
@@ -117,6 +91,7 @@ int main(int argc, char* argv[]) {
                 text(" C-t  toggle timeStamps"),
                 text(" C-p  pause no flush"),
                 text(" C-o  clear serial view"),
+                text(" C-k  (send) toggle touch type"),
                 text(" C-u  (send) toggle upper case"),
                 text(" C-l  (send) cyle line ending"),
              }) 
@@ -191,7 +166,9 @@ int main(int argc, char* argv[]) {
                     separatorEmpty(),
                     text((tuiState == TuiState::SEND) ? "SEND-MODE" : "") | inverted | color(Color::Green),
                     separatorEmpty(),
-                    text((upperOnSend && tuiState == TuiState::SEND) ? "UPPER" : "") | inverted | color(Color::Green),
+                    text((serial.mUpperOnSend && tuiState == TuiState::SEND) ? "UPPER" : "") | inverted | color(Color::Green),
+                    separatorEmpty(),
+                    text((sendOnType && tuiState == TuiState::SEND) ? "TOUCH TYPE" : "") | inverted | color(Color::Green),
                     separatorEmpty(),
                     text((viewPaused) ? "PAUSED" : "") | color(Color::Red) | inverted
                 }) | border,
@@ -199,7 +176,7 @@ int main(int argc, char* argv[]) {
                     text("send:"),
                     serialSendComponent->Render(),
                     separator(),
-                    text(lineEndingsText.at(lineEndingState))
+                    text(serial.getLineEnding())
                 }) | border,
                 vflow(asciiView.getView()) | border
             }) | size(WIDTH, GREATER_THAN, 120);
@@ -276,17 +253,33 @@ int main(int argc, char* argv[]) {
             if (event == Event::Escape) {
                 tuiState = TuiState::VIEW;
             } else if (event == Event::Return) {
-                // asciiView.resetView();
-                std::string toSend = inputStr;
-                if (upperOnSend) std::transform(toSend.begin(), toSend.end(), toSend.begin(), [](uint8_t c){ return std::toupper(c); });
-                serial.send(toSend + lineEndings[lineEndingState]);
+
+                std::string sent = serial.send(inputStr);
+
+                if (transmitEnabled) { asciiView.addTransmitMessage(sent); }
+                
                 inputStr.clear();
+                
             } else if (event == Event::Special({21})) {
-                upperOnSend = !upperOnSend;
+                serial.mUpperOnSend = !serial.mUpperOnSend;
             } else if (event == Event::Special({12})) {
-                lineEndingState++;
+                serial.cycleLineEnding();
+            } else if (event == Event::Special({11})) {
+                sendOnType = !sendOnType;
+                inputStr.clear();
             } else {
-                return serialSendComponent->OnEvent(event);
+
+                if (serialSendComponent->OnEvent(event) && sendOnType) {
+                   
+                    std::string sent = serial.sendChar(inputStr);
+                    
+                    if (transmitEnabled) { asciiView.addTransmitMessage(sent); }
+                    
+                    inputStr.clear();
+                    
+                }
+                
+                return true;
             }
         } else if (tuiState == TuiState::CONFIG) {
             return portConfigurationComponent->OnEvent(event);

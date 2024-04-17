@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <cassert>
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include "Windows.h"
@@ -148,7 +149,31 @@ public:
 
     bool isConnected() { return mIsOpen; }
 
-    void send(const std::string toSend) { send(toSend.c_str(), toSend.size()); }
+    std::string sendChar(std::string toSend) {
+        if (mUpperOnSend) std::transform(toSend.begin(), toSend.end(), toSend.begin(), [](uint8_t c){ return std::toupper(c); });
+        send(toSend.c_str(), toSend.size());
+        return toSend;
+    }
+
+    std::string send(std::string toSend) {
+        if (mUpperOnSend) std::transform(toSend.begin(), toSend.end(), toSend.begin(), [](uint8_t c){ return std::toupper(c); });
+        toSend += lineEnding;
+        send(toSend.c_str(), toSend.size());
+        return toSend;
+    }
+
+    std::string getLineEnding() const {
+        switch(mLineEndingState) {
+            case 1: return "CRLF";
+            case 2: return "  LF";
+            case 3: return "  CR";
+            case 4: return "NONE";
+            default: assert("impossible");
+        };
+        return "";
+    }
+
+    void cycleLineEnding() { mLineEndingState = (mLineEndingState + 1) % sLineEndings.size(); }
 
     void close() { CloseHandle(mSerialHandle); mIsOpen = false; }
 
@@ -163,7 +188,7 @@ public:
     void setStopBits(const StopBits stopbits) { mStopBits = stopbits; }
 
     void setParity(const Parity parity) { mParity = parity; }
-    
+
     const uint32_t getBaudrate() const { return mBaudrate; }
 
     static std::vector<std::string> enumerateComPorts() {
@@ -182,8 +207,13 @@ public:
 
     }
 
+    bool mUpperOnSend = false;
+    std::string lineEnding = "\r\n";
+
 private:
     
+    static constexpr std::array<std::string,4> sLineEndings = {"\r\n", "\n", "\r", ""};
+    size_t mLineEndingState = 0;
     std::string mPort = "";
     uint32_t mBaudrate = 115200;
     uint32_t mDataBits = DATABITS_8;

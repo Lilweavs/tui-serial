@@ -13,6 +13,7 @@
 using namespace ftxui;
 
 struct SerialData {
+    bool rxtx = false;
     std::string text;
     std::chrono::time_point<std::chrono::utc_clock> time;
 };
@@ -30,15 +31,16 @@ public:
         
         Elements rows;
         for (size_t i = mViewIndex; i < std::min(mViewIndex+mRowsOfTextAllowed,mData.size()); i++) {
+
             if (mViewTimeStamps) {
                 rows.push_back(
                     hbox({
                         text(std::format("{:%T} ", floor<milliseconds>(mData.at(i).time))) | color(Color::Green),
-                        text(mData.at(i).text)
+                        text(std::format("[TX] {}", mData.at(i).text)) | color((mData.at(i).rxtx) ? Color::White : Color::Blue)
                     })
                 );
             } else {
-                rows.push_back(text(mData.at(i).text));
+                rows.push_back(text(std::format("[TX] {}", mData.at(i).text)) | color((mData.at(i).rxtx) ? Color::White : Color::Blue));
             }
         }
         
@@ -49,14 +51,14 @@ public:
     void parseBytes(std::span<const uint8_t> slice, const size_t width) {
         
         if (mData.size() > 0) {
-            std::string& last = mData.back().text;
-            if (last.size() == width || last.back() == '\n') {
+            auto& last = mData.back();
+            if (last.text.size() == width || last.text.back() == '\n' || last.rxtx == false) {
                 parseRow(slice, width);
             } else {
-                const size_t bytesToSearch = std::min(width - last.size(), slice.size());
+                const size_t bytesToSearch = std::min(width - last.text.size(), slice.size());
                 const auto it = std::ranges::find(slice.first(bytesToSearch), '\n');
                              
-                last.append(std::string(slice.begin(), (it == slice.end()) ? it : it + 1));
+                last.text.append(std::string(slice.begin(), (it == slice.end()) ? it : it + 1));
 
                 parseRow(std::span((it == slice.end()) ? it : it + 1, slice.end()), width);
                 
@@ -76,6 +78,7 @@ public:
         const auto it = std::ranges::find(slice.first(std::min(slice.size(), width)), '\n');
         mData.emplace_back(
             SerialData{
+                .rxtx = true,
                 .text = std::string(slice.begin(), (it == slice.end()) ? it : it + 1),
                 .time = std::chrono::utc_clock::now()
             }
@@ -113,12 +116,41 @@ public:
         
     }
     
+    void addTransmitMessage(const std::string& txMsg) {
+
+        if (mData.empty()) {
+            mData.push_back(
+                SerialData{
+                    .rxtx = false,
+                    .text = txMsg,
+                    .time = std::chrono::utc_clock::now()
+                }  
+            );
+            return;
+        }
+
+        auto& last = mData.back();
+
+        if (last.rxtx == false && last.text.back() != '\n') {
+            last.text.append(txMsg);
+        } else {
+            mData.push_back(
+                SerialData{
+                    .rxtx = false,
+                    .text = txMsg,
+                    .time = std::chrono::utc_clock::now()
+                }  
+            );
+        }
+        
+    }
     
 private:
 
     size_t mViewIndex = 0;
     size_t mMaxTextRows = 1024;
     bool mViewTimeStamps = true;
+    bool mViewTransmit = true;
     
     std::deque<SerialData> mData;
     size_t mRowsOfTextAllowed = 0;
