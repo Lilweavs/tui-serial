@@ -36,7 +36,7 @@ public:
                 rows.push_back(
                     hbox({
                         text(std::format("{:%T} ", floor<milliseconds>(mData.at(i).time))) | color(Color::Green),
-                        text(std::format("[TX] {}", mData.at(i).text)) | color((mData.at(i).rxtx) ? Color::White : Color::Blue)
+                        text(std::format("[{}] {}", rxOrTxStr[mData.at(i).rxtx], mData.at(i).text)) | color((mData.at(i).rxtx) ? Color::White : Color::Cyan)
                     })
                 );
             } else {
@@ -146,7 +146,7 @@ public:
     }
     
 private:
-
+    static constexpr std::array<std::string, 2> rxOrTxStr = { "TX", "RX"};
     size_t mViewIndex = 0;
     size_t mMaxTextRows = 1024;
     bool mViewTimeStamps = true;

@@ -157,20 +157,19 @@ public:
 
     std::string send(std::string toSend) {
         if (mUpperOnSend) std::transform(toSend.begin(), toSend.end(), toSend.begin(), [](uint8_t c){ return std::toupper(c); });
-        toSend += lineEnding;
+        toSend += sLineEndings[mLineEndingState];
         send(toSend.c_str(), toSend.size());
         return toSend;
     }
 
-    std::string getLineEnding() const {
+    std::string getLineEnding() {
         switch(mLineEndingState) {
-            case 1: return "CRLF";
-            case 2: return "  LF";
-            case 3: return "  CR";
-            case 4: return "NONE";
-            default: assert("impossible");
+            case 0: return "CRLF";
+            case 1: return "  LF";
+            case 2: return "  CR";
+            case 3: return "NONE";
+            default: std::abort();
         };
-        return "";
     }
 
     void cycleLineEnding() { mLineEndingState = (mLineEndingState + 1) % sLineEndings.size(); }
@@ -208,7 +207,6 @@ public:
     }
 
     bool mUpperOnSend = false;
-    std::string lineEnding = "\r\n";
 
 private:
     

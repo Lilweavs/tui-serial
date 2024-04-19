@@ -22,7 +22,7 @@
 #include <chrono>
 
 #include "serial_windows.hpp"
-
+#include "SerialConfigView.hpp"
 #include "AsciiView.hpp"
 
 constexpr size_t fps = 1000 / 60;
@@ -54,6 +54,7 @@ bool transmitEnabled = true;
 
 Serial serial;
 AsciiView asciiView;
+SerialConfigView serialConfigView(serial);
 
 int main(int argc, char* argv[]) {
 
@@ -101,55 +102,6 @@ int main(int argc, char* argv[]) {
 
     });
 
-    std::vector<std::string> availableComPorts;
-    std::vector<std::string> availableBaudrates = {"115200", "921600", "9600", "19200", "38400", "57600", "230400", "460800"};
-    std::vector<std::string> dataBits           = {"8 Data Bits", "7 Data Bits"};
-    std::vector<std::string> stopBits           = {"1 Stop Bits", "1.5 Stop Bits", "2 Stop Bits"};
-    std::vector<std::string> parityStrings      = {"None", "Odd", "Even", "Mark", "Space"};
-    int portSelected = 0;
-    int baudrateSelected = 0;
-    int dataBitsSelected = 0;
-    int stopBitsSelected = 0;
-    int paritySelected = 0;
-
-
-    auto buttonOption = ButtonOption::Ascii();
-    buttonOption.label = "Apply";
-    buttonOption.on_click = [&]() {
-        serial.open(availableComPorts.at(portSelected), std::stoi(availableBaudrates.at(baudrateSelected)));
-        tuiState = TuiState::VIEW;
-    };
-
-    auto buttonOption2 = ButtonOption::Ascii();
-    buttonOption2.label = "Cancel";
-    buttonOption2.on_click = [&]() {
-        tuiState = TuiState::VIEW;
-    };
-
-    auto portConfigurationComponent = Container::Vertical({
-        Dropdown(&availableComPorts, &portSelected),
-        Dropdown(&availableBaudrates, &baudrateSelected),
-        Collapsible("Advanced Config",
-            Container::Vertical({
-                Dropdown(&dataBits, &dataBitsSelected),
-                Dropdown(&stopBits, &stopBitsSelected),
-                Dropdown(&parityStrings, &paritySelected),
-            }),
-            false
-        ),
-        Container::Horizontal({
-            Button(buttonOption),
-            Button(buttonOption2)
-        }) | hcenter,
-    });
-
-    auto configComponent = Renderer([&] {
-        Element view = window(text("Port Configuration"),
-            portConfigurationComponent->Render()
-        );
-        return view;
-    });
-
     auto main_window_renderer = Renderer([&] {
 
         std::string statusString;
@@ -164,7 +116,7 @@ int main(int argc, char* argv[]) {
                 hbox({
                     text(statusString),
                     separatorEmpty(),
-                    text((tuiState == TuiState::SEND) ? "SEND-MODE" : "") | inverted | color(Color::Green),
+                    text((tuiState == TuiState::SEND)? "SEND-MODE": "") | inverted | color(Color::Green),
                     separatorEmpty(),
                     text((serial.mUpperOnSend && tuiState == TuiState::SEND) ? "UPPER" : "") | inverted | color(Color::Green),
                     separatorEmpty(),
@@ -186,7 +138,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (tuiState == TuiState::CONFIG) {
-            view = dbox({ view, configComponent->Render() | center });
+            view = dbox({ view, serialConfigView.getView() | center });
         }
         
         return view;
@@ -231,12 +183,7 @@ int main(int argc, char* argv[]) {
             
             } else if (event == Event::Special({5})) {
                 tuiState = TuiState::CONFIG;
-                availableComPorts = Serial::enumerateComPorts();
-                auto it = std::find(availableComPorts.begin(), availableComPorts.end(), serial.getPortName());
-                if (it != availableComPorts.end()) { portSelected = std::distance(availableComPorts.begin(), it); }
-
-                it = std::find(availableBaudrates.begin(), availableBaudrates.end(), std::to_string(serial.getBaudrate()));
-                if (it != availableBaudrates.end()) { baudrateSelected = std::distance(availableBaudrates.begin(), it); }
+                serialConfigView.listAvailableComPorts(serial);
             } else if (event == Event::Special({15})) { // C-o
                 asciiView.clearView();
             } else if (event == Event::Special({16})) { // C-p
@@ -282,9 +229,9 @@ int main(int argc, char* argv[]) {
                 return true;
             }
         } else if (tuiState == TuiState::CONFIG) {
-            return portConfigurationComponent->OnEvent(event);
+            return serialConfigView.OnEvent(event);
         } else {
-            assert("impossible");
+            assert(not "reachable");
         }
           
         return true;
