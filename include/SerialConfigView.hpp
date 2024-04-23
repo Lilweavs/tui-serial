@@ -20,42 +20,42 @@ static const std::vector<std::string> parityStrings       = {"None", "Odd", "Eve
 class SerialConfigView {
 public:
 
-    SerialConfigView(Serial& serial) : serial(serial) { }
+    SerialConfigView(Serial& serial) : mSerial(serial) { }
 
     ~SerialConfigView() { }
     
     Element getView() {
-        return window(text("Port Configuration"), portConfigurationComponent->Render());
+        return window(text("Port Configuration"), mPortConfigurationComponent->Render());
     }
 
     void listAvailableComPorts(const Serial& serial) {
         
         availableComPorts = Serial::enumerateComPorts();
         auto it = std::find(availableComPorts.cbegin(), availableComPorts.cend(), serial.getPortName());
-        if (it != availableComPorts.end()) { portSelected = std::distance(availableComPorts.cbegin(), it); }
+        if (it != availableComPorts.end()) { mPortSelected = std::distance(availableComPorts.cbegin(), it); }
 
         it = std::find(availableBaudrates.begin(), availableBaudrates.end(), std::to_string(serial.getBaudrate()));
-        if (it != availableBaudrates.end()) { baudrateSelected = std::distance(availableBaudrates.begin(), it); }
+        if (it != availableBaudrates.end()) { mBaudrateSelected = std::distance(availableBaudrates.begin(), it); }
         
     }
 
-    bool OnEvent(Event event) { return portConfigurationComponent->OnEvent(event); }
+    bool OnEvent(Event event) { return mPortConfigurationComponent->OnEvent(event); }
     
 private:
     
-    int portSelected     = 0;
-    int baudrateSelected = 0;
-    int dataBitsSelected = 0;
-    int stopBitsSelected = 0;
-    int paritySelected   = 0;
+    int mPortSelected     = 0;
+    int mBaudrateSelected = 0;
+    int mDataBitsSelected = 0;
+    int mStopBitsSelected = 0;
+    int mParitySelected   = 0;
 
-    Serial& serial;
+    Serial& mSerial;
     
-    ButtonOption buttonOption {
+    ButtonOption mButtonOption {
         .label = "Apply",
         .on_click = [&]() {
-            serial.open(availableComPorts[portSelected],
-                        std::stoi(availableBaudrates[baudrateSelected]));
+            mSerial.open(availableComPorts[mPortSelected],
+                        std::stoi(availableBaudrates[mBaudrateSelected]));
         },
         .transform = [](const EntryState& state) -> Element {
             const std::string t = state.focused ? "[" + state.label + "]"  //
@@ -64,18 +64,18 @@ private:
         }
     };
     
-    Component portConfigurationComponent = Container::Vertical({
-        Dropdown(&availableComPorts, &portSelected),
-        Dropdown(&availableBaudrates, &baudrateSelected),
+    Component mPortConfigurationComponent = Container::Vertical({
+        Dropdown(&availableComPorts, &mPortSelected),
+        Dropdown(&availableBaudrates, &mBaudrateSelected),
         Collapsible("Advanced Config",
             Container::Vertical({
-                Dropdown(&dataBits, &dataBitsSelected),
-                Dropdown(&stopBits, &stopBitsSelected),
-                Dropdown(&parityStrings, &paritySelected),
+                Dropdown(&dataBits, &mDataBitsSelected),
+                Dropdown(&stopBits, &mStopBitsSelected),
+                Dropdown(&parityStrings, &mParitySelected),
             }),
             false
         ),
-        Button(buttonOption) | center,
+        Button(mButtonOption) | center,
     });
     
 };
