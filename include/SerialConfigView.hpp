@@ -25,7 +25,7 @@ public:
     ~SerialConfigView() { }
     
     Element getView() {
-        return window(text("Port Configuration"), mPortConfigurationComponent->Render());
+        return window(text("Port Configuration"), mPortConfigurationComponent->Render()) | clear_under;
     }
 
     void listAvailableComPorts(const Serial& serial) {
