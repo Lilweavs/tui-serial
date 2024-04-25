@@ -22,6 +22,16 @@ public:
 
     ~Serial() { close(); };
 
+    enum class Error {
+        None,
+        UnableToOpenPort,
+        CannotGetCommState,
+        CannotSetCommState,
+        CannotSetCommTimeout,
+        CannotGetCommTimeout,
+        
+    };
+
     enum StopBits {
         ONE  = STOPBITS_10,
         HALF = STOPBITS_15,
@@ -43,7 +53,7 @@ public:
         SPACE = PARITY_SPACE,
     };
 
-    bool open(const std::string& port, const uint32_t baudrate = 115200) {
+    Error open(const std::string& port, const uint32_t baudrate = 115200) {
 
         std::scoped_lock<std::mutex> lock(mutex);
 
@@ -63,39 +73,40 @@ public:
         );
 
         if (mSerialHandle == INVALID_HANDLE_VALUE) {
-            return false;
+            mError = Error::UnableToOpenPort;
+            return mError;
         } else {
             mIsOpen = true;
         }
 
-        return configurePort();
+        mError = configurePort();
+        return mError;
 
     }
 
-    bool configurePort() {
+    Error configurePort() {
 
         DCB serialConfig = {0};
 
-        if (!GetCommState(mSerialHandle, &serialConfig)) return false;
-        
+        if (!GetCommState(mSerialHandle, &serialConfig)) return Error::CannotGetCommState;
+
         serialConfig.BaudRate    = mBaudrate;
         serialConfig.ByteSize    = mDataBits;
         serialConfig.StopBits    = mStopBits;
         serialConfig.Parity      = mParity;
         serialConfig.fDtrControl = DTR_CONTROL_DISABLE;
         
-        if (!SetCommState(mSerialHandle, &serialConfig)) return false;
+        if (!SetCommState(mSerialHandle, &serialConfig)) return Error::CannotGetCommState;
 
         COMMTIMEOUTS serialTimeouts = {0};
-        if (!GetCommTimeouts(mSerialHandle, &serialTimeouts)) return false;
-
+        if (!GetCommTimeouts(mSerialHandle, &serialTimeouts)) return Error::CannotGetCommTimeout;
         serialTimeouts.WriteTotalTimeoutConstant   = 100; // prevent long blocks on WriteFile with write timeout
         serialTimeouts.WriteTotalTimeoutMultiplier = 0;
 
-        if (!SetCommTimeouts(mSerialHandle, &serialTimeouts)) return false;
+        if (!SetCommTimeouts(mSerialHandle, &serialTimeouts)) return Error::CannotSetCommTimeout;
         
         PurgeComm(mSerialHandle, PURGE_RXCLEAR | PURGE_TXCLEAR);
-        return true;
+        return Error::None;
     }
 
 
@@ -188,6 +199,17 @@ public:
 
     void setParity(const Parity parity) { mParity = parity; }
 
+    const std::string getLastError() const {
+        switch(mError) {
+            case Error::None: return "";
+            case Error::UnableToOpenPort: return "UnableToOpenPort";
+            case Error::CannotGetCommState: return "CannotGetCommState";
+            case Error::CannotSetCommState: return "CannotSetCommState";
+            case Error::CannotSetCommTimeout: return "CannotSetCommTimeout";
+            case Error::CannotGetCommTimeout: return "CannotGetCommTimeout";
+        }
+    }
+
     const uint32_t getBaudrate() const { return mBaudrate; }
 
     static std::vector<std::string> enumerateComPorts() {
@@ -210,7 +232,8 @@ public:
 
 private:
     
-    static constexpr std::array<std::string,4> sLineEndings = {"\r\n", "\n", "\r", ""};
+    static constexpr std::array<const char*,4> sLineEndings = {"\r\n", "\n", "\r", ""};
+    Error mError = Error::None;
     size_t mLineEndingState = 0;
     std::string mPort = "";
     uint32_t mBaudrate = 115200;

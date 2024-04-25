@@ -44,7 +44,6 @@ enum class TuiState {
     CONFIG
 };
 
-
 TuiState tuiState = TuiState::VIEW;
 bool helpMenuActive  = false;
 bool configVisable   = false;
@@ -122,7 +121,9 @@ int main(int argc, char* argv[]) {
                     separatorEmpty(),
                     text((sendOnType && tuiState == TuiState::SEND) ? "TOUCH TYPE" : "") | inverted | color(Color::Green),
                     separatorEmpty(),
-                    text((viewPaused) ? "PAUSED" : "") | color(Color::Red) | inverted
+                    text((viewPaused) ? "PAUSED" : "") | color(Color::Red) | inverted,
+                    filler(),
+                    text(serial.getLastError()) | color(Color::Red)
                 }) | border,
                 hbox({
                     text("send:"),
@@ -282,4 +283,3 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
-
