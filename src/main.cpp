@@ -24,6 +24,7 @@
 #include "serial_windows.hpp"
 #include "SerialConfigView.hpp"
 #include "AsciiView.hpp"
+#include "SendView.hpp"
 
 constexpr size_t fps = 1000 / 60;
 
@@ -36,8 +37,6 @@ size_t viewableCharsInRow = 0;
 
 std::atomic<bool> running = true;
 
-std::string inputStr;
-
 enum class TuiState {
     VIEW,
     SEND,
@@ -46,12 +45,11 @@ enum class TuiState {
 
 TuiState tuiState = TuiState::VIEW;
 bool helpMenuActive  = false;
-bool configVisable   = false;
 bool viewPaused      = false;
-bool sendOnType      = false;
 bool transmitEnabled = true;
 
 Serial serial;
+SendView sendView;
 AsciiView asciiView;
 SerialConfigView serialConfigView(serial);
 
@@ -60,23 +58,7 @@ int main(int argc, char* argv[]) {
     auto screen = ScreenInteractive::Fullscreen();
     auto screen_dim = Terminal::Size();
 
-    InputOption option;
-    option.multiline = false;
-    option.content = &inputStr;
-    option.transform = [](InputState state) {
-
-        if (state.focused) {
-            state.element |= color(Color::White);
-        } else {
-            state.element |= color(Color::GrayLight);
-        }
-        
-        return state.element;
-    };
-        
-    auto serialSendComponent = Input(option);
-
-    auto helpComponent = Renderer([] {
+    auto helpView = Renderer([] {
 
         Element view = window(text("Help Menu"), 
             vbox({
@@ -91,6 +73,7 @@ int main(int argc, char* argv[]) {
                 text(" C-t  toggle timeStamps"),
                 text(" C-p  pause no flush"),
                 text(" C-o  clear serial view"),
+                text(" C-b  (send) send break state"),
                 text(" C-k  (send) toggle touch type"),
                 text(" C-u  (send) toggle upper case"),
                 text(" C-l  (send) cyle line ending"),
@@ -117,25 +100,20 @@ int main(int argc, char* argv[]) {
                     separatorEmpty(),
                     text((tuiState == TuiState::SEND)? "SEND-MODE": "") | inverted | color(Color::Green),
                     separatorEmpty(),
-                    text((serial.mUpperOnSend && tuiState == TuiState::SEND) ? "UPPER" : "") | inverted | color(Color::Green),
+                    text((sendView.upperOnSend() && tuiState == TuiState::SEND) ? "UPPER" : "") | inverted | color(Color::Green),
                     separatorEmpty(),
-                    text((sendOnType && tuiState == TuiState::SEND) ? "TOUCH TYPE" : "") | inverted | color(Color::Green),
+                    text((sendView.sendOnType() && tuiState == TuiState::SEND) ? "TOUCH TYPE" : "") | inverted | color(Color::Green),
                     separatorEmpty(),
                     text((viewPaused) ? "PAUSED" : "") | color(Color::Red) | inverted,
                     filler(),
                     text(serial.getLastError()) | color(Color::Red)
                 }) | border,
-                hbox({
-                    text("send:"),
-                    serialSendComponent->Render(),
-                    separator(),
-                    text(serial.getLineEnding())
-                }) | border,
-                vflow(asciiView.getView()) | border
+                sendView.getView(),
+                asciiView.getView(),
             }) | size(WIDTH, GREATER_THAN, 120);
 
         if (helpMenuActive) {
-            view = dbox({view, vbox({filler(), hbox({filler(), helpComponent->Render()}) })});
+            view = dbox({view, vbox({filler(), hbox({filler(), helpView->Render()}) })});
         }
 
         if (tuiState == TuiState::CONFIG) {
@@ -202,29 +180,25 @@ int main(int argc, char* argv[]) {
                 tuiState = TuiState::VIEW;
             } else if (event == Event::Return) {
 
-                std::string sent = serial.send(inputStr);
+                std::string toSend = sendView.getUserInput();
 
-                if (transmitEnabled) { asciiView.addTransmitMessage(sent); }
-                
-                inputStr.clear();
+                if (serial.send(toSend) && transmitEnabled) {
+                    asciiView.addTransmitMessage(toSend);
+                }
                 
             } else if (event == Event::Special({21})) {
-                serial.mUpperOnSend = !serial.mUpperOnSend;
+                sendView.toggleUpperOnSend();
             } else if (event == Event::Special({12})) {
-                serial.cycleLineEnding();
+                sendView.cycleLineEnding();
+            } else if (event == Event::Special({2})) {
+                serial.sendBreakState();
             } else if (event == Event::Special({11})) {
-                sendOnType = !sendOnType;
-                inputStr.clear();
+                sendView.toggleSendOnType();
             } else {
-
-                if (serialSendComponent->OnEvent(event) && sendOnType) {
-                   
-                    std::string sent = serial.sendChar(inputStr);
-                    
-                    if (transmitEnabled) { asciiView.addTransmitMessage(sent); }
-                    
-                    inputStr.clear();
-                    
+                if (sendView.OnEvent(event) && sendView.sendOnType()) {
+                    std::string toSend = sendView.getUserInput();
+                    serial.send(toSend);
+                    if (transmitEnabled) { asciiView.addTransmitMessage(toSend); }
                 }
                 
                 return true;

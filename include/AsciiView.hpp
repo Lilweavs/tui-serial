@@ -4,6 +4,8 @@
 #include <ftxui/screen/color.hpp>
 #include <string>
 #include <chrono>
+#include <span>
+#include <format>
 
 #include "ftxui/dom/elements.hpp"
 
@@ -25,7 +27,7 @@ public:
 
     ~AsciiView() { }
 
-    Elements getView() {
+    Element getView() {
         
         using namespace std::chrono;
         
@@ -44,7 +46,7 @@ public:
             }
         }
         
-        return rows;
+        return vflow(rows) | border;
         
     }
 
@@ -146,7 +148,7 @@ public:
     }
     
 private:
-    static constexpr std::array<std::string, 2> rxOrTxStr = { "TX", "RX"};
+    static constexpr std::array<const char*, 2> rxOrTxStr = { "TX", "RX"};
     size_t mViewIndex = 0;
     size_t mMaxTextRows = 1024;
     bool mViewTimeStamps = true;

@@ -1,13 +1,12 @@
-#include <cstddef>
-#include <cstdint>
-#include <cassert>
-#define NOMINMAX
+#define NOMINMAX 1
 #define WIN32_LEAN_AND_MEAN
 #include "Windows.h"
+#include <chrono>
+#include <cstdint>
+#include <thread>
 #include <string>
 #include <array>
 #include <mutex>
-#include <stdint.h>
 #include <algorithm>
 #include <vector>
 
@@ -55,7 +54,7 @@ public:
 
     Error open(const std::string& port, const uint32_t baudrate = 115200) {
 
-        std::scoped_lock<std::mutex> lock(mutex);
+        std::scoped_lock<std::mutex> lock(mMutex);
 
         if (mIsOpen) { CloseHandle(mSerialHandle); mIsOpen = false; }
                 
@@ -112,7 +111,7 @@ public:
 
     size_t copyBytes(uint8_t* dest) {
 
-        std::scoped_lock<std::mutex> lock(mutex);
+        std::scoped_lock<std::mutex> lock(mMutex);
 
         if (!mIsOpen || mNumBytesInBuffer == 0) return 0;
 
@@ -126,7 +125,7 @@ public:
             
     size_t read() {
 
-        std::scoped_lock<std::mutex> lock(mutex);
+        std::scoped_lock<std::mutex> lock(mMutex);
 
         if (!mIsOpen) { return 0; }
         
@@ -147,7 +146,7 @@ public:
 
     bool send(const char* buffer, size_t length) {
 
-        std::scoped_lock<std::mutex> lock(mutex);
+        std::scoped_lock<std::mutex> lock(mMutex);
 
         if (!mIsOpen) { return 0; }
 
@@ -158,32 +157,18 @@ public:
         return true;
     }
 
+    bool send(std::string toSend) {
+        return send(toSend.c_str(), toSend.size());
+    }
+
+    void sendBreakState() {
+        std::scoped_lock<std::mutex> lock(mMutex);
+        SetCommBreak(mSerialHandle);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        ClearCommBreak(mSerialHandle);
+    }
+
     bool isConnected() { return mIsOpen; }
-
-    std::string sendChar(std::string toSend) {
-        if (mUpperOnSend) std::transform(toSend.begin(), toSend.end(), toSend.begin(), [](uint8_t c){ return std::toupper(c); });
-        send(toSend.c_str(), toSend.size());
-        return toSend;
-    }
-
-    std::string send(std::string toSend) {
-        if (mUpperOnSend) std::transform(toSend.begin(), toSend.end(), toSend.begin(), [](uint8_t c){ return std::toupper(c); });
-        toSend += sLineEndings[mLineEndingState];
-        send(toSend.c_str(), toSend.size());
-        return toSend;
-    }
-
-    std::string getLineEnding() {
-        switch(mLineEndingState) {
-            case 0: return "CRLF";
-            case 1: return "  LF";
-            case 2: return "  CR";
-            case 3: return "NONE";
-            default: std::abort();
-        };
-    }
-
-    void cycleLineEnding() { mLineEndingState = (mLineEndingState + 1) % sLineEndings.size(); }
 
     void close() { CloseHandle(mSerialHandle); mIsOpen = false; }
 
@@ -228,8 +213,6 @@ public:
 
     }
 
-    bool mUpperOnSend = false;
-
 private:
     
     static constexpr std::array<const char*,4> sLineEndings = {"\r\n", "\n", "\r", ""};
@@ -245,7 +228,7 @@ private:
 
     std::array<uint8_t, 8192> mBuffer;
     size_t mNumBytesInBuffer = 0;
-    std::mutex mutex;
+    std::mutex mMutex;
 
 };
 
