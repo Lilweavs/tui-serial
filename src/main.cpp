@@ -23,6 +23,7 @@
 
 #include "serial_windows.hpp"
 #include "SerialConfigView.hpp"
+#include "PreviousCommandsView.hpp"
 #include "AsciiView.hpp"
 #include "SendView.hpp"
 
@@ -40,7 +41,8 @@ std::atomic<bool> running = true;
 enum class TuiState {
     VIEW,
     SEND,
-    CONFIG
+    CONFIG,
+    HISTORY
 };
 
 TuiState tuiState = TuiState::VIEW;
@@ -52,6 +54,7 @@ Serial serial;
 SendView sendView;
 AsciiView asciiView;
 SerialConfigView serialConfigView(serial);
+PreviousCommandsView previousCommandsView;
 
 int main(int argc, char* argv[]) {
 
@@ -119,6 +122,10 @@ int main(int argc, char* argv[]) {
         if (tuiState == TuiState::CONFIG) {
             view = dbox({ view, serialConfigView.getView() | center });
         }
+
+        if (tuiState == TuiState::HISTORY) {
+            view = dbox({ view, previousCommandsView.getView() | center });
+        }
         
         return view;
 
@@ -128,87 +135,103 @@ int main(int argc, char* argv[]) {
 
         if (event == Event::Escape) {
             tuiState = TuiState::VIEW;
-        } else if (tuiState == TuiState::VIEW) {
-            
-            if (const char c = event.character().at(0); event.is_character()) {
+            return true;
+        }
 
-                switch (c) {
-                    case 'p':
-                        // TODO: currently implemented is pause without flush
-                        viewPaused = !viewPaused;
-                        break;
-                    case 'k':
-                        asciiView.scrollViewUp(1);
-                        break;
-                    case 'j':
-                        asciiView.scrollViewDown(1);
-                        break;
-                    case 'K':
-                        asciiView.scrollViewUp(5);
-                        break;       
-                    case 'J':
-                        asciiView.scrollViewDown(5);
-                        break;
-                    case '?':
-                        helpMenuActive = !helpMenuActive;       
-                        break;
-                    case ':':
-                        tuiState = TuiState::SEND;
-                        break;
-                    default:
-                        // not a command
-                        break;
+        switch (tuiState) {
+            case TuiState::VIEW:
+             
+                if (const char c = event.character().at(0); event.is_character()) {
+
+                    switch (c) {
+                        case 'p':
+                            // TODO: currently implemented is pause without flush
+                            viewPaused = !viewPaused;
+                            break;
+                        case 'k':
+                            asciiView.scrollViewUp(1);
+                            break;
+                        case 'j':
+                            asciiView.scrollViewDown(1);
+                            break;
+                        case 'K':
+                            asciiView.scrollViewUp(5);
+                            break;       
+                        case 'J':
+                            asciiView.scrollViewDown(5);
+                            break;
+                        case '?':
+                            helpMenuActive = !helpMenuActive;       
+                            break;
+                        case ':':
+                            tuiState = TuiState::SEND;
+                            break;
+                        default:
+                            // not a command
+                            break;
+                    }
+            
+                } else if (event == Event::Special({5})) {
+                    tuiState = TuiState::CONFIG;
+                    serialConfigView.listAvailableComPorts(serial);
+                } else if (event == Event::Special({15})) { // C-o
+                    asciiView.clearView();
+                } else if (event == Event::Special({16})) { // C-p
+                    // pause serial view with flush
+                    // TODO: allows pausing the serial terminal, but still capture input in the background 
+                } else if (event == Event::Special({20})) {
+                    asciiView.toggleTimeStamps();
+                } else {
+                    // not a command
                 }
-            
-            } else if (event == Event::Special({5})) {
-                tuiState = TuiState::CONFIG;
-                serialConfigView.listAvailableComPorts(serial);
-            } else if (event == Event::Special({15})) { // C-o
-                asciiView.clearView();
-            } else if (event == Event::Special({16})) { // C-p
-                // pause serial view with flush
-                // TODO: allows pausing the serial terminal, but still capture input in the background 
-            } else if (event == Event::Special({20})) {
-                asciiView.toggleTimeStamps();
-            } else {
-                // not a command
-            }
-            
-        } else if (tuiState == TuiState::SEND) {
-
-            if (event == Event::Escape) {
-                tuiState = TuiState::VIEW;
-            } else if (event == Event::Return) {
-
-                std::string toSend = sendView.getUserInput();
-
-                if (serial.send(toSend) && transmitEnabled) {
-                    asciiView.addTransmitMessage(toSend);
-                }
+                break;
                 
-            } else if (event == Event::Special({21})) {
-                sendView.toggleUpperOnSend();
-            } else if (event == Event::Special({12})) {
-                sendView.cycleLineEnding();
-            } else if (event == Event::Special({2})) {
-                serial.sendBreakState();
-            } else if (event == Event::Special({11})) {
-                sendView.toggleSendOnType();
-            } else {
-                if (sendView.OnEvent(event) && sendView.sendOnType()) {
+            case TuiState::SEND:
+
+                if (event == Event::Return) {
+
                     std::string toSend = sendView.getUserInput();
+
+                    if (serial.send(toSend) && transmitEnabled) {
+                        asciiView.addTransmitMessage(toSend);
+                        previousCommandsView.addToHistory(toSend);
+                    }
+                } else if (event == Event::ArrowUp || event == Event::Special({8})) {
+                    tuiState = TuiState::HISTORY;
+                } else if (event == Event::Special({21})) {
+                    sendView.toggleUpperOnSend();
+                } else if (event == Event::Special({12})) {
+                    sendView.cycleLineEnding();
+                } else if (event == Event::Special({2})) {
+                    serial.sendBreakState();
+                } else if (event == Event::Special({11})) {
+                    sendView.toggleSendOnType();
+                } else {
+                    if (sendView.OnEvent(event) && sendView.sendOnType()) {
+                        std::string toSend = sendView.getUserInput();
+                        serial.send(toSend);
+                        if (transmitEnabled) { asciiView.addTransmitMessage(toSend); }
+                    }
+                }
+                break;
+                
+            case TuiState::CONFIG:
+                return serialConfigView.OnEvent(event);
+            case TuiState::HISTORY:
+                if (event == Event::Escape) {
+                    tuiState = TuiState::VIEW;
+                } else if (event == Event::Return) {
+
+                    auto toSend = previousCommandsView.getSendFromHistory(); 
                     serial.send(toSend);
                     if (transmitEnabled) { asciiView.addTransmitMessage(toSend); }
-                }
                 
-                return true;
-            }
-        } else if (tuiState == TuiState::CONFIG) {
-            return serialConfigView.OnEvent(event);
-        } else {
-            assert(not "reachable");
+                } else {
+                    return previousCommandsView.OnEvent(event);
+                }
+                break;
         }
-          
+        
         return true;
 
     });
