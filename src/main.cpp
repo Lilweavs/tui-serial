@@ -218,14 +218,20 @@ int main(int argc, char* argv[]) {
             case TuiState::CONFIG:
                 return serialConfigView.OnEvent(event);
             case TuiState::HISTORY:
-                if (event == Event::Escape) {
+                if (const char c = event.character().at(0); event.is_character()) {
+                    switch (c) {
+                        case 'd':
+                            previousCommandsView.removeFromHistory();
+                            return true;
+                        default:
+                            return previousCommandsView.OnEvent(event);
+                    }
+                } else if (event == Event::Escape) {
                     tuiState = TuiState::VIEW;
                 } else if (event == Event::Return) {
-
                     auto toSend = previousCommandsView.getSendFromHistory(); 
                     serial.send(toSend);
                     if (transmitEnabled) { asciiView.addTransmitMessage(toSend); }
-                
                 } else {
                     return previousCommandsView.OnEvent(event);
                 }

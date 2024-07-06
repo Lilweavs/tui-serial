@@ -26,7 +26,17 @@ public:
         return window(text("Send History"), mHistoryComponent->Render()) | clear_under;
     }
 
-    std::string getSendFromHistory() { return mPreviousCommands.at(mSelectionIdx); }
+    void removeFromHistory() {
+        if (mPreviousCommands.empty()) return;
+        mPreviousCommands.erase(mPreviousCommands.begin() + mSelectionIdx);
+        if (mSelectionIdx > mPreviousCommands.size()) {
+            mSelectionIdx--;
+        }
+    }
+
+    std::string getSendFromHistory() { 
+        if (mPreviousCommands.empty()) return "";
+        return mPreviousCommands.at(mSelectionIdx); }
 
     bool OnEvent(Event event) {
         return mHistoryComponent->OnEvent(event);
