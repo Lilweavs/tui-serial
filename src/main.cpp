@@ -76,6 +76,8 @@ int main(int argc, char* argv[]) {
                 text(" C-t  toggle timeStamps"),
                 text(" C-p  pause no flush"),
                 text(" C-o  clear serial view"),
+                text(" ^    (send) view send history"),
+                text(" d    (history) remove from history"),
                 text(" C-b  (send) send break state"),
                 text(" C-k  (send) toggle touch type"),
                 text(" C-u  (send) toggle upper case"),
