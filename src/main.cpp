@@ -192,10 +192,19 @@ int main(int argc, char* argv[]) {
 
                     std::string toSend = sendView.getUserInput();
 
+                    if (sendView.sendOnType()) {
+                        toSend = sendView.lineEnding();
+                    } else {
+                        if (toSend.empty()) return true;
+                    }
+
                     if (serial.send(toSend) && transmitEnabled) {
                         asciiView.addTransmitMessage(toSend);
-                        previousCommandsView.addToHistory(toSend);
+                        if ((toSend.front() != '\r') && (toSend.front() != '\n')) {
+                            previousCommandsView.addToHistory(toSend);
+                        }
                     }
+                    
                 } else if (event == Event::ArrowUp || event == Event::Special({8})) {
                     tuiState = TuiState::HISTORY;
                 } else if (event == Event::Special({21})) {

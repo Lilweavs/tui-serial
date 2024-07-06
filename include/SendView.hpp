@@ -24,6 +24,8 @@ public:
         mUserInput.clear();
         return toSend;
     }
+
+    std::string lineEnding() const { return sLineEndings[mLineEndingState]; }
     
     Element getView() { 
         return hbox({
