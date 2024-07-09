@@ -25,6 +25,8 @@ public:
         return toSend;
     }
 
+    void setUserInput(const std::string& str) { mUserInput = str; }
+
     std::string lineEnding() const { return sLineEndings[mLineEndingState]; }
     
     Element getView() { 

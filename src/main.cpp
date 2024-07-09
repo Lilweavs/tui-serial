@@ -78,6 +78,7 @@ int main(int argc, char* argv[]) {
                 text(" C-o  clear serial view"),
                 text(" ^    (send) view send history"),
                 text(" d    (history) remove from history"),
+                text(" e    (history) edit from history"),
                 text(" C-b  (send) send break state"),
                 text(" C-k  (send) toggle touch type"),
                 text(" C-u  (send) toggle upper case"),
@@ -203,6 +204,7 @@ int main(int argc, char* argv[]) {
                     if (serial.send(toSend) && transmitEnabled) {
                         asciiView.addTransmitMessage(toSend);
                         if ((toSend.front() != '\r') && (toSend.front() != '\n')) {
+                            std::erase_if(toSend, [](char c) { return std::iscntrl(c); } );
                             previousCommandsView.addToHistory(toSend);
                         }
                     }
@@ -233,14 +235,19 @@ int main(int argc, char* argv[]) {
                     switch (c) {
                         case 'd':
                             previousCommandsView.removeFromHistory();
-                            return true;
+                            break;
+                        case 'e':
+                            sendView.setUserInput(previousCommandsView.getSendFromHistory());
+                            tuiState = TuiState::SEND;
+                            break;
                         default:
                             return previousCommandsView.OnEvent(event);
                     }
                 } else if (event == Event::Escape) {
                     tuiState = TuiState::VIEW;
                 } else if (event == Event::Return) {
-                    auto toSend = previousCommandsView.getSendFromHistory(); 
+                    sendView.setUserInput(previousCommandsView.getSendFromHistory());
+                    std::string toSend = sendView.getUserInput();
                     serial.send(toSend);
                     if (transmitEnabled) { asciiView.addTransmitMessage(toSend); }
                 } else {
