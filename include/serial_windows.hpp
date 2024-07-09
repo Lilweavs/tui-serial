@@ -32,24 +32,24 @@ public:
     };
 
     enum StopBits {
-        ONE  = STOPBITS_10,
-        HALF = STOPBITS_15,
-        TWO  = STOPBITS_20,
+        ONE  = ONESTOPBIT,
+        HALF = ONE5STOPBITS,
+        TWO  = TWOSTOPBITS,
     };
 
     enum DataBits {
-        EIGHT = DATABITS_8,
-        SEVEN = DATABITS_7,
-        SIX   = DATABITS_6,
-        FIVE  = DATABITS_5,
+        EIGHT = 8,
+        SEVEN = 7,
+        SIX   = 6,
+        FIVE  = 5,
     };
     
     enum Parity {
-        NONE  = PARITY_NONE,
-        ODD   = PARITY_ODD,
-        EVEN  = PARITY_EVEN,
-        MARK  = PARITY_MARK,
-        SPACE = PARITY_SPACE,
+        NONE  = NOPARITY,
+        ODD   = ODDPARITY,
+        EVEN  = EVENPARITY,
+        MARK  = MARKPARITY,
+        SPACE = SPACEPARITY,
     };
 
     Error open(const std::string& port, const uint32_t baudrate = 115200) {
@@ -93,7 +93,11 @@ public:
         serialConfig.ByteSize    = mDataBits;
         serialConfig.StopBits    = mStopBits;
         serialConfig.Parity      = mParity;
-        serialConfig.fDtrControl = DTR_CONTROL_DISABLE;
+        serialConfig.fOutxCtsFlow = false;
+        serialConfig.fRtsControl = RTS_CONTROL_DISABLE;
+        serialConfig.fOutX = false;
+        serialConfig.fInX = false;
+
         
         if (!SetCommState(mSerialHandle, &serialConfig)) return Error::CannotGetCommState;
 
@@ -220,9 +224,9 @@ private:
     size_t mLineEndingState = 0;
     std::string mPort = "";
     uint32_t mBaudrate = 115200;
-    uint32_t mDataBits = DATABITS_8;
-    uint32_t mParity   = PARITY_NONE;
-    uint32_t mStopBits = STOPBITS_10;
+    uint32_t mDataBits = DataBits::EIGHT;
+    uint32_t mParity   = Parity::NONE;
+    uint32_t mStopBits = StopBits::ONE;
     HANDLE mSerialHandle = nullptr;
     bool mIsOpen = false;
 
