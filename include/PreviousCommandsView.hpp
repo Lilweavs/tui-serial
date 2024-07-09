@@ -1,6 +1,7 @@
 #ifndef PREVIOUS_COMMANDS_VIEW
 #define PREVIOUS_COMMANDS_VIEW
 
+#include <algorithm>
 #include <ftxui/component/component_base.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <vector>
@@ -13,7 +14,9 @@ class PreviousCommandsView {
 public:
 
     void addToHistory(const std::string& str) {
-        mPreviousCommands.push_back(str);
+        if (std::find(mPreviousCommands.begin(), mPreviousCommands.end(), str) == mPreviousCommands.end()) {
+            mPreviousCommands.push_back(str);
+        };
     }
 
     void toggleView() {
