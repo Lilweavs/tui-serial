@@ -20,6 +20,7 @@
 #include <thread>
 #include <format>
 #include <chrono>
+#include <vector>
 
 #include "serial_windows.hpp"
 #include "SerialConfigView.hpp"
@@ -56,8 +57,19 @@ AsciiView asciiView;
 SerialConfigView serialConfigView(serial);
 PreviousCommandsView previousCommandsView;
 
+constexpr uint8_t MAJOR_VERSION = 0;
+constexpr uint8_t MINOR_VERSION = 1;
+constexpr uint8_t DEV_VERSION   = 0;
+
 int main(int argc, char* argv[]) {
 
+    const std::vector<std::string> argList(argv + 1, argv + argc);
+    if (std::ranges::find_if(argList, [](const auto& str) { return str == "-v" || str == "--version";}) != argList.end()) {
+        std::printf("tui-serial v%d.%d.%d\n", MAJOR_VERSION, MINOR_VERSION, DEV_VERSION);
+        return 0;
+    }
+
+        
     auto screen = ScreenInteractive::Fullscreen();
     auto screen_dim = Terminal::Size();
 
@@ -221,7 +233,7 @@ int main(int argc, char* argv[]) {
                     sendView.toggleSendOnType();
                 } else {
                     if (sendView.OnEvent(event) && sendView.sendOnType()) {
-                        std::string toSend = sendView.getUserInput();
+                        const std::string toSend = sendView.getUserInput();
                         serial.send(toSend);
                         if (transmitEnabled) { asciiView.addTransmitMessage(toSend); }
                     }
@@ -247,7 +259,7 @@ int main(int argc, char* argv[]) {
                     tuiState = TuiState::VIEW;
                 } else if (event == Event::Return) {
                     sendView.setUserInput(previousCommandsView.getSendFromHistory());
-                    std::string toSend = sendView.getUserInput();
+                    const std::string toSend = sendView.getUserInput();
                     serial.send(toSend);
                     if (transmitEnabled) { asciiView.addTransmitMessage(toSend); }
                 } else {
@@ -288,8 +300,7 @@ int main(int argc, char* argv[]) {
         viewableCharsInRow = std::max(screen.dimx() - 2, 80);
         viewableTextRows   = std::max(screen.dimy() - 8, 10);
 
-        const auto bytesRead = serial.copyBytes(buf.data());
-        if (bytesRead) {
+        if (const auto bytesRead = serial.copyBytes(buf.data()); bytesRead > 0) {
             asciiView.parseBytes(std::span(buf.begin(), bytesRead), viewableCharsInRow);
             asciiView.resetView(viewableTextRows);
             screen.PostEvent(Event::Custom);
