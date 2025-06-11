@@ -45,6 +45,10 @@ public:
         return mHistoryComponent->OnEvent(event);
     }
 
+    std::vector<std::string> getCommandHistory() {
+        return mPreviousCommands;    
+    }
+
 private:
 
     bool mEnableView = false;

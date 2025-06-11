@@ -21,12 +21,14 @@
 #include <format>
 #include <chrono>
 #include <vector>
+#include <fstream>
 
 #include "serial_windows.hpp"
 #include "SerialConfigView.hpp"
 #include "PreviousCommandsView.hpp"
 #include "AsciiView.hpp"
 #include "SendView.hpp"
+#include "Utils.hpp"
 
 constexpr size_t fps = 1000 / 60;
 
@@ -292,6 +294,18 @@ int main(int argc, char* argv[]) {
 
     }
 
+    {
+        std::filesystem::path appDataFile = getApplicationFolderDirectory();
+        appDataFile = appDataFile / "tui-serial" / "history.txt";
+        if (std::filesystem::exists(appDataFile)) {
+            std::ifstream file(appDataFile.string());
+            std::string line;
+            while(std::getline(file, line)) {
+                previousCommandsView.addToHistory(line);
+            }
+        }
+    }
+
     std::thread serialThread(pollSerial);
 
     loop.RunOnce();
@@ -310,8 +324,35 @@ int main(int argc, char* argv[]) {
         std::this_thread::sleep_for(std::chrono::milliseconds(fps));
 
     }
+
+    const auto previousCommands = previousCommandsView.getCommandHistory();    
+
+    std::filesystem::path appDataFolder = getApplicationFolderDirectory();
+    
+    if (!appDataFolder.empty()) {
+        
+        appDataFolder = appDataFolder / "tui-serial";
+
+        if (!std::filesystem::exists(appDataFolder)) {
+            std::filesystem::create_directory(appDataFolder);
+        }
+
+        auto appDataFile = appDataFolder / "history.txt";
+
+        std::ofstream file(appDataFile.string(), std::ios::trunc);
+
+        for (const auto cmds : previousCommands) {
+            file << cmds << '\n';
+        }
+
+        
+    }
+
+    
     running = false;
     serialThread.join();
 
     return 0;
 }
+
+

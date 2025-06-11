@@ -1,3 +1,6 @@
+#ifndef SERIAL_WINDOWS_HPP
+#define SERIAL_WINDOWS_HPP
+
 #define NOMINMAX 1
 #define WIN32_LEAN_AND_MEAN
 #include "Windows.h"
@@ -9,9 +12,6 @@
 #include <mutex>
 #include <algorithm>
 #include <vector>
-
-#ifndef SERIAL_WINDOWS_HPP
-#define SERIAL_WINDOWS_HPP
 
 class Serial {
 
@@ -197,6 +197,7 @@ public:
             case Error::CannotSetCommTimeout: return "CannotSetCommTimeout";
             case Error::CannotGetCommTimeout: return "CannotGetCommTimeout";
         }
+        return "";
     }
 
     const uint32_t getBaudrate() const { return mBaudrate; }
